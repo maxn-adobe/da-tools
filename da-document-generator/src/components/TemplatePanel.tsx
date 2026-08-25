@@ -39,16 +39,14 @@ export default function TemplatePanel({ columns, template, onTemplatePathChange 
 
       {showCard && (
         <div
-          className={`flex flex-col gap-3 rounded-lg border p-3 ${
-            valid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
-          }`}
+          className={`flex flex-col gap-3 rounded-lg border p-3 ${valid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+            }`}
         >
           {/* Top-left: Valid / Invalid pill, inline with a link to the template document */}
           <div className="flex flex-wrap items-center gap-2">
             <span
-              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-              }`}
+              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                }`}
             >
               {valid ? 'Valid' : 'Invalid'}
             </span>
@@ -77,8 +75,8 @@ export default function TemplatePanel({ columns, template, onTemplatePathChange 
                   const cls = !hasData
                     ? 'bg-gray-100 text-gray-600 border-gray-200'
                     : columnSet.has(p)
-                    ? 'bg-green-100 text-green-700 border-green-200'
-                    : 'bg-amber-100 text-amber-700 border-amber-200';
+                      ? 'bg-green-100 text-green-700 border-green-200'
+                      : 'bg-amber-100 text-amber-700 border-amber-200';
                   return (
                     <span key={p} className={`rounded border px-1.5 py-0.5 font-mono text-[11px] ${cls}`}>
                       {p}
@@ -94,7 +92,7 @@ export default function TemplatePanel({ columns, template, onTemplatePathChange 
                     <Swatch className="bg-green-400" /> matching data column
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <Swatch className="bg-amber-400" /> in template, missing from your data
+                    <Swatch className="bg-amber-400" /> in template, missing from data
                   </span>
                 </div>
               )}
