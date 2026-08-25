@@ -1,5 +1,5 @@
 import { Fragment, useState } from 'react';
-import type { ModeSelection, RowResult } from '../types';
+import type { RowResult } from '../types';
 import type { DaDocumentActions } from '../hooks/useDaDocumentActions';
 import { GeneratePill, PreviewPill, PublishPill, QaIssueBadge } from './StatusPills';
 
@@ -7,7 +7,6 @@ interface Props {
   canGenerate: boolean;
   generating: boolean;
   selectedCount: number;
-  mode: ModeSelection;
   onGenerate: () => void;
   results: RowResult[];
   actions: DaDocumentActions<RowResult>;
@@ -17,13 +16,11 @@ export default function GeneratePanel({
   canGenerate,
   generating,
   selectedCount,
-  mode,
   onGenerate,
   results,
   actions,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const docsPerRow = mode === 'both' ? 2 : 1;
 
   function toggle(id: string) {
     setExpanded((prev) => {
@@ -44,7 +41,7 @@ export default function GeneratePanel({
       >
         {generating
           ? 'Generating…'
-          : `Generate ${selectedCount} ${selectedCount === 1 ? 'row' : 'rows'}${docsPerRow === 2 ? ' × 2 modes' : ''}`}
+          : `Generate ${selectedCount} ${selectedCount === 1 ? 'row' : 'rows'}`}
       </button>
 
       {results.length > 0 && (
@@ -53,7 +50,6 @@ export default function GeneratePanel({
             <thead className="bg-gray-50 text-xs text-gray-600">
               <tr>
                 <th className="px-3 py-2 font-medium">Output path</th>
-                <th className="px-3 py-2 font-medium">Mode</th>
                 <th className="px-3 py-2 font-medium">Doc</th>
                 <th className="px-3 py-2 font-medium">Preview</th>
                 <th className="px-3 py-2 font-medium">Publish</th>
@@ -72,9 +68,6 @@ export default function GeneratePanel({
                       ) : (
                         r.path
                       )}
-                    </td>
-                    <td className="px-3 py-1.5 text-xs">
-                      <span className={r.mode === 'bake' ? 'text-purple-700' : 'text-teal-700'}>{r.mode}</span>
                     </td>
                     <td className="px-3 py-1.5">
                       <GeneratePill result={r} onGenerate={() => {}} onDelete={() => actions.deleteRow(r)} />
@@ -95,7 +88,7 @@ export default function GeneratePanel({
                   </tr>
                   {expanded.has(r.id) && r.qa && (
                     <tr className="bg-gray-50">
-                      <td colSpan={6} className="px-3 py-2">
+                      <td colSpan={5} className="px-3 py-2">
                         <ul className="flex flex-col gap-1 text-xs">
                           {r.qa.checks.map((c) => (
                             <li key={c.id} className={c.pass ? 'text-green-700' : 'text-amber-700'}>

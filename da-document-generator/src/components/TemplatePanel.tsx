@@ -2,11 +2,6 @@ import type { TemplateState } from '../types';
 import { urlToSourcePath } from '../api/daApi';
 import { ExternalLinkIcon } from './StatusPills';
 
-// Tokens the Express color block fills at runtime (mirrors content-replace.js's
-// whitelist) — these are NOT populated from the user's data, so they keep their
-// own indigo treatment regardless of whether a data column matches.
-const BLOCK_FILLED = new Set(['type', 'quantity', 'heading_placeholder', 'prompt-text']);
-
 const inputCls =
   'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none';
 
@@ -79,9 +74,7 @@ export default function TemplatePanel({ columns, template, onTemplatePathChange 
 
               <div className="flex flex-wrap gap-1.5">
                 {v.placeholders.map((p) => {
-                  const cls = BLOCK_FILLED.has(p)
-                    ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
-                    : !hasData
+                  const cls = !hasData
                     ? 'bg-gray-100 text-gray-600 border-gray-200'
                     : columnSet.has(p)
                     ? 'bg-green-100 text-green-700 border-green-200'
@@ -94,31 +87,17 @@ export default function TemplatePanel({ columns, template, onTemplatePathChange 
                 })}
               </div>
 
-              {/* Legend — colored swatches (no color names, no '='). Coverage colors appear once data is uploaded. */}
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
-                {hasData ? (
-                  <>
-                    <span className="flex items-center gap-1.5">
-                      <Swatch className="bg-green-400" /> matching data column
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Swatch className="bg-amber-400" /> in template, missing from your data
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Swatch className="bg-indigo-400" /> filled by the page's block at runtime (not from your data)
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="flex items-center gap-1.5">
-                      <Swatch className="bg-gray-300" /> placeholder token (populated from your data)
-                    </span>
-                    <span className="flex items-center gap-1.5">
-                      <Swatch className="bg-indigo-400" /> filled by the page's block at runtime (not from your data)
-                    </span>
-                  </>
-                )}
-              </div>
+              {/* Legend — colored swatches (no color names, no '='). Only meaningful once data is uploaded. */}
+              {hasData && (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+                  <span className="flex items-center gap-1.5">
+                    <Swatch className="bg-green-400" /> matching data column
+                  </span>
+                  <span className="flex items-center gap-1.5">
+                    <Swatch className="bg-amber-400" /> in template, missing from your data
+                  </span>
+                </div>
+              )}
             </>
           ) : (
             /* Fetch error — show the code + message where the tokens would go. */

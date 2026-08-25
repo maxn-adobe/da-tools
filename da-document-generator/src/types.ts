@@ -3,12 +3,6 @@ import type { TemplateValidation } from './api/daApi';
 // _id is a string so it satisfies the string index signature
 export type CsvRow = Record<string, string>;
 
-/** How a generated document gets its content. */
-export type RenderMode = 'bake' | 'metadata';
-
-/** UI selection for the render mode — 'both' generates one doc per row per mode. */
-export type ModeSelection = RenderMode | 'both';
-
 export type RowStage =
   | 'pending'
   | 'generating'
@@ -39,8 +33,6 @@ export interface RowResult {
   id: string;
   path: string;
   stage: RowStage;
-  /** The render mode that produced this result row (bake vs metadata). */
-  mode?: RenderMode;
   error?: string;
   editUrl?: string;
   previewUrl?: string;
@@ -59,9 +51,6 @@ export interface TemplateState {
 
 /** Output-location configuration (App-level UI state). */
 export interface OutputState {
-  source: 'column' | 'dir';
-  pathColumn: string;
-  prefix: string;
   outputDir: string;
   slugColumn: string;
 }

@@ -1,20 +1,12 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import type { CsvRow, ModeSelection, OutputState, RenderMode, RowResult, TemplateState } from './types';
+import type { CsvRow, OutputState, RowResult, TemplateState } from './types';
 import { cat, validateTemplate, docExists, postDoc, createDocVersion, getToken } from './api/daApi';
 import { runBatch } from './lib/concurrency';
-import {
-  buildDoc,
-  resolveOutputPath,
-  withModeSegment,
-  runBakeQa,
-  runMetadataQa,
-  type OutputConfig,
-} from './lib/buildDoc';
+import { buildBakedDoc, resolveOutputPath, runBakeQa } from './lib/buildDoc';
 import { useDaDocumentActions } from './hooks/useDaDocumentActions';
 import TemplatePanel from './components/TemplatePanel';
 import DataUpload from './components/DataUpload';
 import OutputPanel from './components/OutputPanel';
-import RenderModePanel from './components/RenderModePanel';
 import GeneratePanel from './components/GeneratePanel';
 
 const DEFAULT_TEMPLATE_PATH = '/adobecom/da-express-milo/es/express/colors/default';
@@ -26,10 +18,7 @@ export default function App() {
   const [template, setTemplate] = useState<TemplateState>({
     path: DEFAULT_TEMPLATE_PATH, html: null, validation: null, error: null, loading: false,
   });
-  const [output, setOutput] = useState<OutputState>({
-    source: 'column', pathColumn: 'url', prefix: '/adobecom/da-express-milo', outputDir: '', slugColumn: '',
-  });
-  const [mode, setMode] = useState<ModeSelection>('both');
+  const [output, setOutput] = useState<OutputState>({ outputDir: '', slugColumn: '' });
   const [results, setResults] = useState<RowResult[]>([]);
   const [generating, setGenerating] = useState(false);
 
@@ -68,15 +57,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template.path]);
 
-  function toOutputConfig(): OutputConfig {
-    return output.source === 'column'
-      ? { source: 'column', pathColumn: output.pathColumn, prefix: output.prefix }
-      : { source: 'dir', outputDir: output.outputDir, slugColumn: output.slugColumn };
-  }
-
-  const outputValid = output.source === 'column'
-    ? !!output.pathColumn
-    : !!output.outputDir && !!output.slugColumn;
+  const outputValid = !!output.outputDir && !!output.slugColumn;
   const canGenerate = !!template.html && selectedRows.length > 0 && outputValid && !generating;
 
   async function handleGenerate() {
@@ -84,19 +65,14 @@ export default function App() {
     const tmplHtml = template.html;
     if (!token || !tmplHtml) return;
 
-    const modes: RenderMode[] = mode === 'both' ? ['bake', 'metadata'] : [mode];
-    const cfg = toOutputConfig();
-
-    const work: { id: string; row: CsvRow; mode: RenderMode; path: string }[] = [];
+    const work: { id: string; row: CsvRow; path: string }[] = [];
     for (const row of selectedRows) {
-      const base = resolveOutputPath(row, cfg);
-      if (!base) continue;
-      for (const m of modes) {
-        work.push({ id: `${row._id}:${m}`, row, mode: m, path: mode === 'both' ? withModeSegment(base, m) : base });
-      }
+      const path = resolveOutputPath(row, output);
+      if (!path) continue;
+      work.push({ id: row._id, row, path });
     }
 
-    setResults(work.map((w): RowResult => ({ id: w.id, path: w.path, mode: w.mode, stage: 'pending' })));
+    setResults(work.map((w): RowResult => ({ id: w.id, path: w.path, stage: 'pending' })));
     setGenerating(true);
     const patch = (id: string, changes: Partial<RowResult>) =>
       setResults((prev) => prev.map((r) => (r.id === id ? { ...r, ...changes } : r)));
@@ -104,8 +80,8 @@ export default function App() {
     await runBatch(work, async (w) => {
       patch(w.id, { stage: 'generating' });
       try {
-        const html = buildDoc(w.mode, tmplHtml, w.row);
-        const qa = w.mode === 'bake' ? runBakeQa(html) : runMetadataQa(tmplHtml, w.row);
+        const html = buildBakedDoc(tmplHtml, w.row);
+        const qa = runBakeQa(html);
         if (await docExists(w.path)) {
           try { await createDocVersion(w.path, 'Pre-generation backup'); } catch { /* proceed */ }
         }
@@ -161,18 +137,11 @@ export default function App() {
       )}
 
       {rows.length > 0 && (
-        <Step n={4} title="Render mode">
-          <RenderModePanel mode={mode} setMode={setMode} />
-        </Step>
-      )}
-
-      {rows.length > 0 && (
-        <Step n={5} title="Generate & results">
+        <Step n={4} title="Generate & results">
           <GeneratePanel
             canGenerate={canGenerate}
             generating={generating}
             selectedCount={selectedRows.length}
-            mode={mode}
             onGenerate={handleGenerate}
             results={results}
             actions={actions}
