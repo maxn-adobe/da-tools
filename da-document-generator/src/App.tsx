@@ -135,18 +135,18 @@ export default function App() {
         )}
       </header>
 
-      <Step n={1} title="Template">
+      <Step n={1} title="Add Template">
         <TemplatePanel
-          columns={columns}
           template={template}
           onTemplatePathChange={(p) => setTemplate((t) => ({ ...t, path: p }))}
         />
       </Step>
 
-      <Step n={2} title="Data">
+      <Step n={2} title="Add Data">
         <DataUpload
           rows={rows}
           fileName={fileName}
+          placeholders={template.validation?.placeholders ?? []}
           selectedIds={selectedIds}
           onLoaded={(r, f) => { setRows(r); setFileName(f); }}
           onSelectionChange={setSelectedIds}
