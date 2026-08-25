@@ -1,0 +1,11 @@
+.*
+*.md
+*.json
+!*/**/*.json
+LICENSE
+test/*
+build/*
+!tools/sidekick/config.json
+package.json
+package-lock.json
+web-test-runner.config.mjs
