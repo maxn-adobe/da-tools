@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { CsvRow, ModeSelection, OutputState, RenderMode, RowResult, TemplateState } from './types';
 import { cat, validateTemplate, docExists, postDoc, createDocVersion, getToken } from './api/daApi';
 import { runBatch } from './lib/concurrency';
@@ -11,16 +11,20 @@ import {
   type OutputConfig,
 } from './lib/buildDoc';
 import { useDaDocumentActions } from './hooks/useDaDocumentActions';
+import TemplatePanel from './components/TemplatePanel';
 import DataUpload from './components/DataUpload';
-import TemplateTargetPanel from './components/TemplateTargetPanel';
+import OutputPanel from './components/OutputPanel';
+import RenderModePanel from './components/RenderModePanel';
 import GeneratePanel from './components/GeneratePanel';
+
+const DEFAULT_TEMPLATE_PATH = '/adobecom/da-express-milo/es/express/colors/default';
 
 export default function App() {
   const [rows, setRows] = useState<CsvRow[]>([]);
   const [fileName, setFileName] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [template, setTemplate] = useState<TemplateState>({
-    path: '', html: null, validation: null, error: null, loading: false,
+    path: DEFAULT_TEMPLATE_PATH, html: null, validation: null, error: null, loading: false,
   });
   const [output, setOutput] = useState<OutputState>({
     source: 'column', pathColumn: 'url', prefix: '/adobecom/da-express-milo', outputDir: '', slugColumn: '',
@@ -37,18 +41,32 @@ export default function App() {
 
   const actions = useDaDocumentActions<RowResult>(setResults, { afterDelete: () => undefined });
 
-  async function handleValidate() {
-    setTemplate((t) => ({ ...t, loading: true, error: null }));
-    try {
-      const html = await cat(template.path.trim());
-      setTemplate((t) => ({ ...t, html, validation: validateTemplate(html), loading: false }));
-    } catch (err) {
-      setTemplate((t) => ({
-        ...t, html: null, validation: null, loading: false,
-        error: err instanceof Error ? err.message : String(err),
-      }));
+  // Live-validate the template whenever its path changes (debounced) — replaces the Validate
+  // button. Fires on mount for the default path. The `cancelled` guard drops stale responses.
+  useEffect(() => {
+    const path = template.path.trim();
+    if (!path) {
+      setTemplate((t) => ({ ...t, html: null, validation: null, error: null, loading: false }));
+      return;
     }
-  }
+    let cancelled = false;
+    setTemplate((t) => ({ ...t, loading: true, error: null }));
+    const timer = setTimeout(async () => {
+      try {
+        const html = await cat(path);
+        if (cancelled) return;
+        setTemplate((t) => ({ ...t, html, validation: validateTemplate(html), loading: false }));
+      } catch (err) {
+        if (cancelled) return;
+        setTemplate((t) => ({
+          ...t, html: null, validation: null, loading: false,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+      }
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [template.path]);
 
   function toOutputConfig(): OutputConfig {
     return output.source === 'column'
@@ -118,7 +136,15 @@ export default function App() {
         )}
       </header>
 
-      <Step n={1} title="Data">
+      <Step n={1} title="Template">
+        <TemplatePanel
+          columns={columns}
+          template={template}
+          onTemplatePathChange={(p) => setTemplate((t) => ({ ...t, path: p }))}
+        />
+      </Step>
+
+      <Step n={2} title="Data">
         <DataUpload
           rows={rows}
           fileName={fileName}
@@ -129,22 +155,19 @@ export default function App() {
       </Step>
 
       {rows.length > 0 && (
-        <Step n={2} title="Template & target">
-          <TemplateTargetPanel
-            columns={columns}
-            template={template}
-            onTemplatePathChange={(p) => setTemplate((t) => ({ ...t, path: p }))}
-            onValidate={handleValidate}
-            output={output}
-            setOutput={setOutput}
-            mode={mode}
-            setMode={setMode}
-          />
+        <Step n={3} title="Output location">
+          <OutputPanel columns={columns} output={output} setOutput={setOutput} />
         </Step>
       )}
 
       {rows.length > 0 && (
-        <Step n={3} title="Generate & results">
+        <Step n={4} title="Render mode">
+          <RenderModePanel mode={mode} setMode={setMode} />
+        </Step>
+      )}
+
+      {rows.length > 0 && (
+        <Step n={5} title="Generate & results">
           <GeneratePanel
             canGenerate={canGenerate}
             generating={generating}
