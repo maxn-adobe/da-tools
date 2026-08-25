@@ -60,7 +60,7 @@ export default function App() {
         if (cancelled) return;
         setTemplate((t) => ({
           ...t, html: null, validation: null, loading: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: friendlyTemplateError(err),
         }));
       }
     }, 400);
@@ -137,6 +137,7 @@ export default function App() {
 
       <Step n={1} title="Add Template">
         <TemplatePanel
+          columns={columns}
           template={template}
           onTemplatePathChange={(p) => setTemplate((t) => ({ ...t, path: p }))}
         />
@@ -180,6 +181,20 @@ export default function App() {
       )}
     </div>
   );
+}
+
+/**
+ * Map a template-fetch failure to "<code>: <friendly message>" (code kept so the panel can badge it).
+ * Mirrors the PDP tool's TemplateOverridePanel error copy.
+ */
+function friendlyTemplateError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err);
+  const m = raw.match(/^(\d{3}):\s*(.*)$/s);
+  if (!m) return raw;
+  const [, code, body] = m;
+  if (code === '404') return '404: Template not found — check the path and confirm you have access.';
+  if (code === '403') return "403: Access denied — confirm you're in the correct DA organization.";
+  return `${code}: ${body || 'Unexpected error fetching the template.'}`;
 }
 
 function Step({ n, title, children }: { n: number; title: string; children: ReactNode }) {

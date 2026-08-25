@@ -90,7 +90,12 @@ export async function cat(filePath: string): Promise<string> {
     cache: 'no-store',
     headers: { Authorization: `Bearer ${t}` },
   });
-  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+  if (!resp.ok) {
+    // DA's source API returns 404 with an empty body — fall back to the status text so the
+    // thrown message is never just "404: ".
+    const body = (await resp.text()).trim();
+    throw new Error(`${resp.status}: ${body || resp.statusText || 'Request failed'}`);
+  }
   return resp.text();
 }
 

@@ -3,22 +3,32 @@ import { urlToSourcePath } from '../api/daApi';
 import { ExternalLinkIcon } from './StatusPills';
 
 // Tokens the Express color block fills at runtime (mirrors content-replace.js's
-// whitelist) — these are NOT populated from the user's data, so they get their
-// own treatment instead of being shown as regular placeholders.
+// whitelist) — these are NOT populated from the user's data, so they keep their
+// own indigo treatment regardless of whether a data column matches.
 const BLOCK_FILLED = new Set(['type', 'quantity', 'heading_placeholder', 'prompt-text']);
 
 const inputCls =
   'w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none';
 
 interface Props {
+  columns: string[];
   template: TemplateState;
   onTemplatePathChange: (p: string) => void;
 }
 
-export default function TemplatePanel({ template, onTemplatePathChange }: Props) {
+export default function TemplatePanel({ columns, template, onTemplatePathChange }: Props) {
   const v = template.validation;
-  // "Valid" = the template is usable (has a <main>); a 'warning' (e.g. no tokens found) still counts.
+  const err = template.error;
+  // "Valid" = template loaded + usable (has <main>); a 'warning' still counts. Any fetch error → invalid.
   const valid = v ? v.status === 'ready' || v.status === 'warning' : false;
+
+  // Coverage is only meaningful once data is uploaded (App derives `columns` from the data rows).
+  const hasData = columns.length > 0;
+  const columnSet = new Set(columns);
+  const matched = v ? columns.filter((c) => v.placeholders.includes(c)).length : 0;
+
+  // Keep the result card mounted for both success and error, so a bad path doesn't wipe the section.
+  const showCard = !template.loading && (v || err);
 
   return (
     <section className="flex flex-col gap-3">
@@ -31,9 +41,8 @@ export default function TemplatePanel({ template, onTemplatePathChange }: Props)
       />
 
       {template.loading && <p className="text-sm text-gray-500">Validating…</p>}
-      {template.error && !template.loading && <p className="text-sm text-red-600">{template.error}</p>}
 
-      {v && !template.loading && (
+      {showCard && (
         <div
           className={`flex flex-col gap-3 rounded-lg border p-3 ${
             valid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
@@ -59,38 +68,81 @@ export default function TemplatePanel({ template, onTemplatePathChange }: Props)
             </a>
           </div>
 
-          <p className="text-sm text-gray-600">
-            {v.placeholders.length} placeholder token{v.placeholders.length === 1 ? '' : 's'}
-            {v.issues.length > 0 && <span className="text-gray-500"> — {v.issues.join('; ')}</span>}
-          </p>
+          {v ? (
+            <>
+              <p className="text-sm text-gray-600">
+                {hasData
+                  ? `${matched} of ${columns.length} column${columns.length === 1 ? '' : 's'} map to a template placeholder.`
+                  : `${v.placeholders.length} placeholder token${v.placeholders.length === 1 ? '' : 's'}`}
+                {v.issues.length > 0 && <span className="text-gray-500"> — {v.issues.join('; ')}</span>}
+              </p>
 
-          <div className="flex flex-wrap gap-1.5">
-            {v.placeholders.map((p) => {
-              const blockFilled = BLOCK_FILLED.has(p);
-              const cls = blockFilled
-                ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
-                : 'bg-gray-100 text-gray-600 border-gray-200';
-              return (
-                <span key={p} className={`rounded border px-1.5 py-0.5 font-mono text-[11px] ${cls}`}>
-                  {p}
-                </span>
-              );
-            })}
-          </div>
+              <div className="flex flex-wrap gap-1.5">
+                {v.placeholders.map((p) => {
+                  const cls = BLOCK_FILLED.has(p)
+                    ? 'bg-indigo-100 text-indigo-700 border-indigo-200'
+                    : !hasData
+                    ? 'bg-gray-100 text-gray-600 border-gray-200'
+                    : columnSet.has(p)
+                    ? 'bg-green-100 text-green-700 border-green-200'
+                    : 'bg-amber-100 text-amber-700 border-amber-200';
+                  return (
+                    <span key={p} className={`rounded border px-1.5 py-0.5 font-mono text-[11px] ${cls}`}>
+                      {p}
+                    </span>
+                  );
+                })}
+              </div>
 
-          {/* Legend — colored swatches (no color names, no '='). Coverage against your
-              data is reported in the Add Data step, once a file is uploaded. */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
-            <span className="flex items-center gap-1.5">
-              <Swatch className="bg-gray-300" /> placeholder token (populated from your data)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <Swatch className="bg-indigo-400" /> filled by the page's block at runtime (not from your data)
-            </span>
-          </div>
+              {/* Legend — colored swatches (no color names, no '='). Coverage colors appear once data is uploaded. */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
+                {hasData ? (
+                  <>
+                    <span className="flex items-center gap-1.5">
+                      <Swatch className="bg-green-400" /> matching data column
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Swatch className="bg-amber-400" /> in template, missing from your data
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Swatch className="bg-indigo-400" /> filled by the page's block at runtime (not from your data)
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="flex items-center gap-1.5">
+                      <Swatch className="bg-gray-300" /> placeholder token (populated from your data)
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <Swatch className="bg-indigo-400" /> filled by the page's block at runtime (not from your data)
+                    </span>
+                  </>
+                )}
+              </div>
+            </>
+          ) : (
+            /* Fetch error — show the code + message where the tokens would go. */
+            <ErrorRow error={err ?? ''} />
+          )}
         </div>
       )}
     </section>
+  );
+}
+
+function ErrorRow({ error }: { error: string }) {
+  const m = error.match(/^(\d{3}):\s*(.*)$/s);
+  const code = m ? m[1] : null;
+  const message = m ? m[2] : error;
+  return (
+    <div className="flex items-start gap-2 text-sm text-red-700">
+      {code && (
+        <span className="shrink-0 rounded bg-red-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-red-700">
+          {code}
+        </span>
+      )}
+      <span className="break-words">{message}</span>
+    </div>
   );
 }
 
