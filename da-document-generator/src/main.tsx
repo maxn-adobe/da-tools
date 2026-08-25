@@ -1,12 +1,11 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { setToken } from './api/daApi';
 import './index.css';
 import App from './App';
 
-const queryClient = new QueryClient();
-
+// Obtain the DA auth token: from the da.live "Nx Shell" SDK when embedded in DA, or from
+// VITE_DA_TOKEN when running standalone locally. Identical handshake to the doc-generator.
 async function initToken() {
   const localToken = import.meta.env.VITE_DA_TOKEN;
   if (localToken) {
@@ -41,9 +40,7 @@ function main() {
     await initToken();
     root.render(
       <StrictMode>
-        <QueryClientProvider client={queryClient}>
-          <App />
-        </QueryClientProvider>
+        <App />
       </StrictMode>
     );
   })();

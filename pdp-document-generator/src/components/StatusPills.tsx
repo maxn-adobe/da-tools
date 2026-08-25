@@ -1,4 +1,4 @@
-import type { RowResult } from '../types';
+import type { RowResult, GmcEnvState, GmcEnv } from '../types';
 
 export type ExistenceCheck = 'checking' | 'exists' | 'not-found' | 'error';
 
@@ -140,6 +140,103 @@ export function PublishPill({
     );
   }
   return <span className="text-gray-300">—</span>;
+}
+
+// Final value set per GMC-Status-Sync-PRD.md §8 — collapses Google's active/pending/disapproved/
+// unknown plus our own `stale` flag down to five author-facing states. This single-env chip is the
+// reusable core: the main-page column composes two of them (GmcBothEnvStatus) and the submit
+// dialog reuses it for each row's current-env status
+export function GmcStatusChip({
+  state,
+  checking,
+  onCheck,
+  disabledReason,
+}: {
+  state?: GmcEnvState;
+  checking?: boolean;
+  onCheck?: () => void;
+  disabledReason?: string;
+}) {
+  if (checking) return <span className="text-gray-400 font-medium">Checking…</span>;
+
+  const label = !state ? (onCheck ? 'Check status' : disabledReason || 'Not submitted')
+    : state.status === 'live' ? 'Live'
+    : state.status === 'disapproved' ? 'Disapproved'
+    : state.status === 'error' ? 'Error'
+    : state.status === 'not-pushed' ? 'Not pushed to GMC'
+    : 'Pending';
+  const color = !state ? 'text-gray-400'
+    : state.status === 'live' ? 'text-green-700'
+    : state.status === 'disapproved' ? 'text-red-700'
+    : state.status === 'error' ? 'text-red-600'
+    : state.status === 'not-pushed' ? 'text-gray-500'
+    : 'text-amber-600';
+  const title = state?.message ? state.message : undefined;
+
+  if (!onCheck) return <span className={`font-medium ${color}`} title={title || disabledReason}>{label}</span>;
+  return (
+    <button
+      type="button"
+      onClick={onCheck}
+      title={title || 'Re-check GMC status for this row'}
+      className={`font-medium transition-colors cursor-pointer hover:underline ${color}`}
+    >
+      {label}
+    </button>
+  );
+}
+
+// The main-page status column shows both environments at once now that submit-env selection lives
+// in the dialog (GMC-Submit-Dialog-PRD.md §5).
+export function GmcBothEnvStatus({
+  gmc,
+  checking,
+  onCheck,
+  disabledReason,
+}: {
+  gmc?: { test?: GmcEnvState; prod?: GmcEnvState };
+  checking?: { test?: boolean; prod?: boolean };
+  onCheck?: (env: GmcEnv) => void;
+  disabledReason?: string;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5 text-[11px]">
+      <span className="flex items-center gap-1">
+        <span className="text-gray-400 w-7 shrink-0">test</span>
+        <GmcStatusChip
+          state={gmc?.test}
+          checking={checking?.test}
+          onCheck={onCheck && (() => onCheck('test'))}
+          disabledReason={disabledReason}
+        />
+      </span>
+      <span className="flex items-center gap-1">
+        <span className="text-gray-400 w-7 shrink-0">prod</span>
+        <GmcStatusChip
+          state={gmc?.prod}
+          checking={checking?.prod}
+          onCheck={onCheck && (() => onCheck('prod'))}
+          disabledReason={disabledReason}
+        />
+      </span>
+    </div>
+  );
+}
+
+// Provenance marker: this field's value came from Zazzle rather than the authored DA doc — verify
+// before submit (GMC-Submit-Dialog-PRD.md §7). Provenance only, never a blocker.
+export function ProvenanceBadge({ title = 'Sourced from Zazzle — verify before submit' }: { title?: string }) {
+  return (
+    <span title={title} aria-label="Sourced from Zazzle" className="inline-flex items-center text-amber-500 cursor-help align-middle">
+      <svg viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5" aria-hidden="true">
+        <path
+          fillRule="evenodd"
+          d="M8.5 2.9a1.7 1.7 0 0 1 3 0l6 10.4A1.7 1.7 0 0 1 16 15.8H4a1.7 1.7 0 0 1-1.5-2.5l6-10.4ZM10 7a.75.75 0 0 0-.75.75v3a.75.75 0 0 0 1.5 0v-3A.75.75 0 0 0 10 7Zm0 7a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"
+          clipRule="evenodd"
+        />
+      </svg>
+    </span>
+  );
 }
 
 export function ExistenceBadge({ status }: { status: ExistenceCheck | undefined }) {

@@ -6,46 +6,44 @@ A container repository that hosts **multiple standalone DA (Document Authoring) 
 
 | Tool | Folder | Opens in DA at |
 |---|---|---|
-| **Document Generator** — bulk-generate DA pages from product data + templates | [`doc-generator/`](./doc-generator/) | https://da.live/app/maxn-adobe/pdp-document-generator/doc-generator/dist/index |
-| **Template Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`template-generator/`](./template-generator/) | https://da.live/app/maxn-adobe/pdp-document-generator/template-generator/dist/index |
-| **Hello** — minimal proof-of-concept app | [`hello/`](./hello/) | https://da.live/app/maxn-adobe/pdp-document-generator/hello/dist/index |
+| **PDP Document Generator** — bulk-generate DA pages from product data + templates | [`pdp-document-generator/`](./pdp-document-generator/) | https://da.live/app/maxn-adobe/pdp-document-generator/pdp-document-generator/dist/index |
+| **DA Document Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`da-document-generator/`](./da-document-generator/) | https://da.live/app/maxn-adobe/pdp-document-generator/da-document-generator/dist/index |
 
-Append `?ref=<branch>` to preview a non-`main` branch, e.g. `…/hello/dist/index?ref=my-branch`.
+Append `?ref=<branch>` to preview a non-`main` branch, e.g. `…/da-document-generator/dist/index?ref=my-branch`.
 
 ## Repository layout
 
 ```
-pdp-document-generator/
-├─ doc-generator/          # tool 1 — self-contained Vite app
+pdp-document-generator/                 (repo)
+├─ pdp-document-generator/  # PDP tool — bulk-generate product pages (Zazzle)
 │  ├─ src/  index.html  vite.config.ts  package.json
 │  └─ dist/{ index.html, assets/ }   # built output (committed)
-├─ hello/                  # tool 2 — self-contained Vite app
+├─ da-document-generator/   # generic {{token}} → DA document generator
 │  ├─ src/  index.html  vite.config.ts  package.json
 │  └─ dist/{ index.html, assets/ }   # built output (committed)
-├─ template-generator/     # tool 3 — generic {{token}} → DA document generator
-│  ├─ src/  index.html  vite.config.ts  package.json
-│  └─ dist/{ index.html, assets/ }   # built output (committed)
-├─ fstab.yaml              # repo-level: registers the EDS site
-├─ SERVING.md              # repo-level: how serving works + troubleshooting
+├─ fstab.yaml               # repo-level: registers the EDS site
+├─ SERVING.md               # repo-level: how serving works + troubleshooting
 └─ README.md
 ```
 
 Each tool is independent: its own `package.json`, `node_modules`, Vite config, and build. There is intentionally **no** root `package.json` — you work inside a tool's folder.
 
+> Note: the repo and the PDP tool folder share the name `pdp-document-generator`, so that tool's URL contains the name twice (`…/pdp-document-generator/pdp-document-generator/dist/index`) — that's expected.
+
 ## Working on a tool
 
 ```bash
-cd doc-generator      # or: cd hello
+cd pdp-document-generator      # or: cd da-document-generator
 npm install
-npm run dev           # local dev server
-npm run build         # compiles to ./dist (commit the result)
+npm run dev                    # local dev server
+npm run build                  # compiles to ./dist (commit the result)
 ```
 
 The built `dist/` is committed because AEM Code Sync serves the repo's files directly (there is no CI build step). After `npm run build`, commit the updated `<tool>/dist/` and push — Code Sync mirrors it to the code bus in ~1–2 min.
 
 ## Adding a new tool
 
-1. Create a new top-level folder `my-tool/` as a standard Vite + React app (copy `hello/` as a starting point).
+1. Create a new top-level folder `my-tool/` as a standard Vite + React app (copy an existing tool as a starting point).
 2. In its `vite.config.ts`, set the production `base` to the served subfolder:
    ```ts
    const base = command === 'serve' ? '/' : '/my-tool/dist/'

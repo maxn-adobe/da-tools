@@ -1,20 +1,13 @@
+import type { TemplateValidation } from './api/daApi';
+
 // _id is a string so it satisfies the string index signature
 export type CsvRow = Record<string, string>;
 
-export interface InputSummary {
-  total: number;
-  duplicates: number;
-  duplicateSlugs: number;
-  missing: number;
-  duplicateProductIdRowIds: Set<string>;
-  duplicateSlugRowIds: Set<string>;
-}
+/** How a generated document gets its content. */
+export type RenderMode = 'bake' | 'metadata';
 
-export interface ProductTypeConfig {
-  productType: string;
-  templatePath: string;
-  outputDir: string;
-}
+/** UI selection for the render mode — 'both' generates one doc per row per mode. */
+export type ModeSelection = RenderMode | 'both';
 
 export type RowStage =
   | 'pending'
@@ -46,6 +39,8 @@ export interface RowResult {
   id: string;
   path: string;
   stage: RowStage;
+  /** The render mode that produced this result row (bake vs metadata). */
+  mode?: RenderMode;
   error?: string;
   editUrl?: string;
   previewUrl?: string;
@@ -53,44 +48,20 @@ export interface RowResult {
   qa?: QaResult;
 }
 
-export interface ManagedDocIdentity {
-  productType?: string;
-  productId?: string;
-  generatedBatch?: string;
-  lastUpdated?: string;
+/** Template input + fetch/validation state (App-level). */
+export interface TemplateState {
+  path: string;
+  html: string | null;
+  validation: TemplateValidation | null;
+  error: string | null;
+  loading: boolean;
 }
 
-export type GmcEnv = 'test' | 'prod';
-
-export type GmcStatus = 'pending' | 'live' | 'disapproved' | 'error' | 'not-pushed';
-
-export interface GmcEnvState {
-  status: GmcStatus;
-  lastSubmittedAt?: string;
-  lastCheckedAt?: string;
-  /** Failure/disapproval reason, shown on hover — see GMC-Status-Sync-PRD.md §9. */
-  message?: string;
-}
-
-export interface ManagedDoc extends RowResult {
-  /** Folder containing this doc, relative to the scanned root path (e.g. "/hoodie"). */
-  subDirectory: string;
-  identity: ManagedDocIdentity;
-  /** True if product-type or product-id metadata is missing (predates the metadata contract). */
-  needsBackfill: boolean;
-  /** True if the publish/preview status check failed (rate-limited/unreachable) — the real state is unknown, not "draft". */
-  statusUnknown?: boolean;
-  title?: string;
-  shortTitle?: string;
-  description?: string;
-  editable: {
-    title: boolean;
-    shortTitle: boolean;
-    description: boolean;
-  };
-  /** Per-environment GMC submission state. Absence of a given env's entry means "Not submitted". */
-  gmc?: {
-    test?: GmcEnvState;
-    prod?: GmcEnvState;
-  };
+/** Output-location configuration (App-level UI state). */
+export interface OutputState {
+  source: 'column' | 'dir';
+  pathColumn: string;
+  prefix: string;
+  outputDir: string;
+  slugColumn: string;
 }

@@ -1,41 +1,32 @@
 # DA Document Generator
 
-A browser-based tool for bulk-generating DA (Document Authoring) pages from product data and one or more DA document templates.
+A generic DA tool: fill a template document's `{{placeholder}}` tokens from a spreadsheet (CSV/XLSX) or JSON file and write the resulting documents to DA. A more general sibling of the [pdp-document-generator](../pdp-document-generator/), with the product-specific logic stripped out.
 
-For a full technical walkthrough of every module and how they interact, see [ARCHITECTURE.md](./ARCHITECTURE.md).
+Opens in DA at: **https://da.live/app/maxn-adobe/pdp-document-generator/da-document-generator/dist/index**
 
 ## What it does
 
-1. **Provide product data** — paste Zazzle product IDs directly, or upload a `.csv`/`.xlsx` file. Optionally run **Validate** (confirm each ID resolves to a real Zazzle product) and/or **Hydrate** (fill in missing columns — `title`, `short_title`, `description`, `url_slug`, etc. — from the matching Zazzle product, flagging anything that differs from manually-entered data). Duplicate product IDs/slugs and content issues (title length, casing, encoding, etc.) are surfaced inline. Additional columns beyond the recognized fields are substituted into the template as `{{column_name}}` placeholders.
-2. **Confirm routing** — a DA config sheet maps each row's `product_type` to a template path and output directory. Alternatively, check **Override template** to force every selected row through one chosen template/output directory regardless of product type. The tool validates the config sheet, the resolved template's structure, and the output directory before allowing generation.
-3. **Select rows and generate** — choose which rows to include, then generate: the tool substitutes placeholders, runs a QA check for leftover placeholders, versions any existing document before overwriting it, and writes the resulting HTML to DA via the admin API.
-4. **Preview, publish, unpublish, or delete** — per row or in bulk. Publishing additionally fetches the live page and QA-checks it for a title, meta description, and OG image.
+1. **Data** — upload a CSV/XLSX/JSON file (JSON may be an array of objects or a DA sheet `{ "data": [...] }`). Each column becomes a `{{column}}` token; pick which rows to generate.
+2. **Template & target** — point at a DA template document (path or URL). The tool fetches it, lists its `{{tokens}}`, and flags any token with no matching data column. Choose the output location (an explicit path column such as `url`, or a fixed directory + slug column) and the render mode.
+3. **Generate** — writes one document per selected row (versioning any existing doc first), then preview / publish per row or in bulk.
 
-The **Generate** tab covers steps 1–4 above. A second **Document Manager** tab lets you point at any DA folder and manage documents that already exist there — regardless of which session created them. It recursively lists every document under that folder, lets you filter/sort by sub-directory, generate batch, and status, and offers the same preview/publish/unpublish/delete/edit actions (individually or in bulk) sourced from what's actually in DA rather than from an in-memory batch.
+## Render modes
 
-## Usage
+- **Bake** — substitutes values into the document body and resolves `#cta` links at generation time, and attaches page metadata with `sheet-powered` forced off. Self-contained static docs that render with **no runtime script**.
+- **Metadata** — leaves `{{tokens}}` in the body and attaches a Metadata block of the row's values with `sheet-powered=Y`; the site's `content-replace.js` fills the tokens at render (how the Express color pages work today).
+- **Both** — writes one doc per mode into `/baked/` and `/meta/` subfolders so the two can be compared side by side.
 
-### From DA.live (typical)
-This is how the tool is used the vast majority of the time. Open it as an app from within DA.live — the DA shell automatically injects an auth token (via `https://da.live/nx/utils/sdk.js`), so no token setup is required.
+## Local dev
 
-### Local dev (rare — running outside DA.live)
-Only needed if you're running the app standalone, e.g. `npm run dev` opened directly in a plain browser tab rather than embedded in DA.live. In that case there's no DA shell to supply a token automatically, so you must provide one yourself:
 ```bash
 npm install
-# Set your DA token
-echo "VITE_DA_TOKEN=your_token_here" > .env.local
-npm run dev
+echo "VITE_DA_TOKEN=your_token_here" > .env.local   # needed for DA calls when run outside da.live
+npm run dev      # port 3002
+npm run build    # compiles to ./dist (commit the result)
 ```
 
-### Build
-```bash
-npm run build
-# Outputs to dist/ — committed to the repo so it can be served via da.live
-```
+Built output lives in `dist/` (committed) and is served at `/da-document-generator/dist/`. See the repo-level [../SERVING.md](../SERVING.md) for how serving works.
 
-## Stack
+## Reuse
 
-- React 19 + TypeScript
-- Vite 8
-- Tailwind CSS v4
-- TanStack Query
+The DA API layer (`src/api/daApi.ts`), metadata-block builder (`src/lib/metadata.ts`), `applyTemplate` (`src/lib/generate.ts`), concurrency helper, token bootstrap, action hooks, and status pills are copied from `pdp-document-generator`. The tool-specific logic lives in `src/lib/buildDoc.ts` (the bake/metadata builders + output-path resolution + QA) and `src/components/`.

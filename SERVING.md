@@ -8,9 +8,8 @@ Each tool builds to `<tool>/dist/` and is served at that subfolder path:
 
 | Tool | In da.live (primary) | Direct (delivery) |
 |---|---|---|
-| `doc-generator` | https://da.live/app/maxn-adobe/pdp-document-generator/doc-generator/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/doc-generator/dist/index.html |
-| `hello` | https://da.live/app/maxn-adobe/pdp-document-generator/hello/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/hello/dist/index.html |
-| `template-generator` | https://da.live/app/maxn-adobe/pdp-document-generator/template-generator/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/template-generator/dist/index.html |
+| `pdp-document-generator` | https://da.live/app/maxn-adobe/pdp-document-generator/pdp-document-generator/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/pdp-document-generator/dist/index.html |
+| `da-document-generator` | https://da.live/app/maxn-adobe/pdp-document-generator/da-document-generator/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/da-document-generator/dist/index.html |
 
 Append `?ref=<branch>` to the da.live URL (or use `<branch>--pdp-document-generator--maxn-adobe.aem.live` for the direct URL) to view a non-`main` branch.
 
@@ -18,7 +17,7 @@ Append `?ref=<branch>` to the da.live URL (or use `<branch>--pdp-document-genera
 
 - **Two kinds of files:** *code* (this repo's built files, mirrored to the code bus by AEM Code Sync) vs *content* (authored docs — not used by these tools).
 - **Two tiers:** a **preview** tier (`…aem.page` / `…preview.da.live`) and a **live** tier (`…aem.live`). Code is served on both automatically once Code Sync mirrors it — there is no separate "publish" step for code.
-- **da.live embedding:** `da.live/app/{org}/{repo}/{path}` loads the "Nx Shell", which iframes `https://{ref}--{repo}--{org}.preview.da.live/{path}.html` and injects the DA auth token via `nx/utils/sdk.js`. So the app URL `…/hello/dist/index` loads `…preview.da.live/hello/dist/index.html`.
+- **da.live embedding:** `da.live/app/{org}/{repo}/{path}` loads the "Nx Shell", which iframes `https://{ref}--{repo}--{org}.preview.da.live/{path}.html` and injects the DA auth token via `nx/utils/sdk.js`. So the app URL `…/da-document-generator/dist/index` loads `…preview.da.live/da-document-generator/dist/index.html`.
 
 ## Per-tool subfolder layout
 
@@ -32,7 +31,7 @@ The one rule: each tool's production **`base` must equal its served subfolder** 
 
 This mirrors the proven `adobecom/da-express-milo` pattern, which serves tools at `tools/<tool>/dist/index.html`.
 
-> **Note (previously believed otherwise):** an earlier iteration of the doc generator placed its built entry at the repo **root** because a subfolder `/dist/index.html` appeared to 404 on the preview tier. That 404 was a **Code Sync sync-timing artifact** (the file wasn't on the code bus yet), *not* a platform rule. Subfolder `.html` files serve fine — confirmed on this repo (`/doc-generator/dist/index.html`, `/hello/dist/index.html`) and on the reference repo. No root-entry workaround or postbuild step is needed.
+> **Note (previously believed otherwise):** an earlier iteration of the doc generator placed its built entry at the repo **root** because a subfolder `/dist/index.html` appeared to 404 on the preview tier. That 404 was a **Code Sync sync-timing artifact** (the file wasn't on the code bus yet), *not* a platform rule. Subfolder `.html` files serve fine — confirmed on this repo (`/pdp-document-generator/dist/index.html`, `/da-document-generator/dist/index.html`) and on the reference repo. No root-entry workaround or postbuild step is needed.
 
 ## One-time setup (per repo — already done for this repo)
 
@@ -51,7 +50,7 @@ The site is registered once for the **whole repo**; individual tools need no ext
 ## Troubleshooting (read the `x-error` response header)
 
 ```bash
-curl -sS -D - -o /dev/null "https://main--pdp-document-generator--maxn-adobe.aem.live/hello/dist/index.html" | grep -i "x-error\|HTTP/"
+curl -sS -D - -o /dev/null "https://main--pdp-document-generator--maxn-adobe.aem.live/da-document-generator/dist/index.html" | grep -i "x-error\|HTTP/"
 ```
 
 | `x-error` | Meaning | Fix |

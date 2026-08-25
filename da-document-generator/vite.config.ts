@@ -2,9 +2,13 @@ import { defineConfig } from 'vite'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
+// Self-contained Vite app for the "da-document-generator" tool — the generic
+// spreadsheet/JSON -> {{token}} -> DA document generator. Builds into
+// da-document-generator/dist/ and is served by AEM Edge Delivery at that subfolder path.
+//
+// Built entry:  da-document-generator/dist/index.html  ->  /da-document-generator/dist/index.html
+// da.live app:  https://da.live/app/maxn-adobe/pdp-document-generator/da-document-generator/dist/index
 export default defineConfig(({ command }) => {
-  // Served from this repo's code bus at /da-document-generator/dist/ (NOT the old
-  // da-express-milo /tools/... path). Must match the subfolder or assets 404 (blank page).
   const base = command === 'serve' ? '/' : '/da-document-generator/dist/'
 
   return {
@@ -20,7 +24,8 @@ export default defineConfig(({ command }) => {
       },
     },
     server: {
-      port: 3000,
+      // Distinct port from pdp-document-generator (3000) so both can run at once.
+      port: 3002,
     },
   }
 })
