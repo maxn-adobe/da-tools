@@ -24,8 +24,7 @@ export default defineConfig(({ command }) => {
       },
     },
     server: {
-      // Distinct port from pdp-document-generator (3000) so both can run at once.
-      port: 3002,
+      port: 3000,
     },
   }
 })

@@ -21,7 +21,7 @@ Opens in DA at: **https://da.live/app/maxn-adobe/pdp-document-generator/da-docum
 ```bash
 npm install
 echo "VITE_DA_TOKEN=your_token_here" > .env.local   # needed for DA calls when run outside da.live
-npm run dev      # port 3002
+npm run dev      # port 3000
 npm run build    # compiles to ./dist (commit the result)
 ```
 
