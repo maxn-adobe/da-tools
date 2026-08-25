@@ -18,7 +18,10 @@ export default function App() {
   const [template, setTemplate] = useState<TemplateState>({
     path: DEFAULT_TEMPLATE_PATH, html: null, validation: null, error: null, loading: false,
   });
-  const [output, setOutput] = useState<OutputState>({ outputDir: '', slugColumn: '' });
+  const [output, setOutput] = useState<OutputState>({
+    outputDir: '/adobecom/da-express-milo/drafts/maxn/color-test', slugColumn: '',
+  });
+  const [outputDirValid, setOutputDirValid] = useState(false);
   const [results, setResults] = useState<RowResult[]>([]);
   const [generating, setGenerating] = useState(false);
 
@@ -57,7 +60,7 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [template.path]);
 
-  const outputValid = !!output.outputDir && !!output.slugColumn;
+  const outputValid = !!output.outputDir && !!output.slugColumn && outputDirValid;
   const canGenerate = !!template.html && selectedRows.length > 0 && outputValid && !generating;
 
   async function handleGenerate() {
@@ -132,7 +135,14 @@ export default function App() {
 
       {rows.length > 0 && (
         <Step n={3} title="Output location">
-          <OutputPanel columns={columns} output={output} setOutput={setOutput} />
+          <OutputPanel
+            columns={columns}
+            rows={rows}
+            selectedRows={selectedRows}
+            output={output}
+            setOutput={setOutput}
+            onDirValidChange={setOutputDirValid}
+          />
         </Step>
       )}
 
