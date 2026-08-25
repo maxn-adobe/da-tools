@@ -124,10 +124,9 @@ export default function App() {
   return (
     <div className="mx-auto max-w-5xl px-6 py-8 font-sans text-gray-900">
       <header className="mb-6">
-        <h1 className="text-2xl font-bold">Template Generator</h1>
+        <h1 className="text-2xl font-bold">DA Document Generator</h1>
         <p className="mt-1 text-sm text-gray-600">
-          Fill a DA template's <code className="rounded bg-gray-100 px-1">{'{{tokens}}'}</code> from a
-          spreadsheet or JSON and write the resulting documents to DA.
+          Populate the <code className="rounded bg-gray-100 px-1">{'{{placeholder}}'}</code> values of a DA template document with custom data from a spreadsheet or JSON and generate a document for each item / row.
         </p>
         {noToken && (
           <p className="mt-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">

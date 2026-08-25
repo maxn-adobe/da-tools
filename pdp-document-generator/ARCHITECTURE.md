@@ -4,7 +4,7 @@ This is the technical deep-dive for `pdp-document-generator`. It documents every
 
 ## 1. Overview
 
-DA Document Generator is a browser-only React app for bulk-creating (or updating) DA (Document Authoring) pages from product data. A user supplies a set of Zazzle product IDs (pasted or via CSV/XLSX upload), optionally enriches/validates that data against the Zazzle API, routes each row to an HTML template based on its `product_type` (or overrides routing with a single template for all rows), and generates one DA document per row by substituting `{{placeholder}}` tokens in the template. From there, rows can be previewed, published, unpublished, or deleted — individually or in bulk — with QA checks run both immediately after generation and against the live page after publish.
+PDP Document Generator is a browser-only React app for bulk-creating (or updating) DA (Document Authoring) pages from product data. A user supplies a set of Zazzle product IDs (pasted or via CSV/XLSX upload), optionally enriches/validates that data against the Zazzle API, routes each row to an HTML template based on its `product_type` (or overrides routing with a single template for all rows), and generates one DA document per row by substituting `{{placeholder}}` tokens in the template. From there, rows can be previewed, published, unpublished, or deleted — individually or in bulk — with QA checks run both immediately after generation and against the live page after publish.
 
 Everything runs client-side against three external APIs: the DA Admin API (`admin.da.live`), the AEM Admin API (`admin.hlx.page`), and the Zazzle partner API (`www.zazzle.com/svc/partner/adobeexpress`). There is no backend of its own.
 

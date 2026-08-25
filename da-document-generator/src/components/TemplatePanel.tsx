@@ -1,4 +1,6 @@
 import type { TemplateState } from '../types';
+import { urlToSourcePath } from '../api/daApi';
+import { ExternalLinkIcon } from './StatusPills';
 
 // Tokens the template-x block fills at runtime; not expected to come from data.
 const BLOCK_FILLED = new Set(['type', 'quantity', 'heading_placeholder', 'prompt-text']);
@@ -14,6 +16,8 @@ interface Props {
 
 export default function TemplatePanel({ columns, template, onTemplatePathChange }: Props) {
   const v = template.validation;
+  // "Valid" = the template is usable (has a <main>); a 'warning' (e.g. no tokens found) still counts.
+  const valid = v ? v.status === 'ready' || v.status === 'warning' : false;
 
   return (
     <section className="flex flex-col gap-3">
@@ -29,20 +33,25 @@ export default function TemplatePanel({ columns, template, onTemplatePathChange 
       {template.error && !template.loading && <p className="text-sm text-red-600">{template.error}</p>}
 
       {v && !template.loading && (
-        <div className="flex flex-col gap-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
-          <p className="text-sm">
-            Status:{' '}
-            <span
-              className={
-                v.status === 'ready' ? 'font-medium text-green-700'
-                : v.status === 'warning' ? 'font-medium text-amber-700'
-                : 'font-medium text-red-700'
-              }
-            >
-              {v.status}
-            </span>
+        <div
+          className={`flex flex-col gap-3 rounded-lg border p-3 ${
+            valid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+          }`}
+        >
+          {/* Link to the provided template document (opens it in DA) */}
+          <a
+            href={`https://da.live/edit#${urlToSourcePath(template.path)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex w-max items-center gap-1 break-all font-mono text-xs text-gray-500 hover:text-blue-600"
+          >
+            {template.path}
+            <ExternalLinkIcon />
+          </a>
+
+          <p className="text-sm text-gray-600">
+            {v.placeholders.length} placeholder token{v.placeholders.length === 1 ? '' : 's'}
             {v.issues.length > 0 && <span className="text-gray-500"> — {v.issues.join('; ')}</span>}
-            <span className="text-gray-400"> · {v.placeholders.length} placeholder tokens</span>
           </p>
 
           <div className="flex flex-wrap gap-1.5">
@@ -62,7 +71,7 @@ export default function TemplatePanel({ columns, template, onTemplatePathChange 
             })}
           </div>
 
-          {/* Legend — below the pills, colored swatches (no color names, no '=') */}
+          {/* Legend — colored swatches (no color names, no '=') */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-600">
             <span className="flex items-center gap-1.5">
               <Swatch className="bg-green-400" /> matching data column
@@ -72,6 +81,17 @@ export default function TemplatePanel({ columns, template, onTemplatePathChange 
             </span>
             <span className="flex items-center gap-1.5">
               <Swatch className="bg-gray-300" /> filled by the page's block at runtime (not from your data)
+            </span>
+          </div>
+
+          {/* Valid / Invalid pill — bottom-left corner */}
+          <div>
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              }`}
+            >
+              {valid ? 'Valid' : 'Invalid'}
             </span>
           </div>
         </div>
