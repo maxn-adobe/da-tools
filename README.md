@@ -7,6 +7,7 @@ A container repository that hosts **multiple standalone DA (Document Authoring) 
 | Tool | Folder | Opens in DA at |
 |---|---|---|
 | **Document Generator** — bulk-generate DA pages from product data + templates | [`doc-generator/`](./doc-generator/) | https://da.live/app/maxn-adobe/pdp-document-generator/doc-generator/dist/index |
+| **Template Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`template-generator/`](./template-generator/) | https://da.live/app/maxn-adobe/pdp-document-generator/template-generator/dist/index |
 | **Hello** — minimal proof-of-concept app | [`hello/`](./hello/) | https://da.live/app/maxn-adobe/pdp-document-generator/hello/dist/index |
 
 Append `?ref=<branch>` to preview a non-`main` branch, e.g. `…/hello/dist/index?ref=my-branch`.
@@ -19,6 +20,9 @@ pdp-document-generator/
 │  ├─ src/  index.html  vite.config.ts  package.json
 │  └─ dist/{ index.html, assets/ }   # built output (committed)
 ├─ hello/                  # tool 2 — self-contained Vite app
+│  ├─ src/  index.html  vite.config.ts  package.json
+│  └─ dist/{ index.html, assets/ }   # built output (committed)
+├─ template-generator/     # tool 3 — generic {{token}} → DA document generator
 │  ├─ src/  index.html  vite.config.ts  package.json
 │  └─ dist/{ index.html, assets/ }   # built output (committed)
 ├─ fstab.yaml              # repo-level: registers the EDS site

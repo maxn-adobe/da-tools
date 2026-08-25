@@ -1,0 +1,295 @@
+import { runBatch, DEFAULT_CONCURRENCY, sleep } from '../lib/concurrency';
+
+const DA_API = 'https://admin.da.live';
+const HLX_ADMIN = 'https://admin.hlx.page';
+const BRANCH = 'main';
+
+function parseDAPath(daPath: string): { org: string; repo: string; contentPath: string } {
+  const parts = daPath.replace(/\.html$/, '').split('/').filter(Boolean);
+  const [org, repo, ...rest] = parts;
+  return { org, repo, contentPath: `/${rest.join('/')}` };
+}
+
+export function daPathToPreviewUrl(daPath: string): string {
+  const { org, repo, contentPath } = parseDAPath(daPath);
+  return `https://${BRANCH}--${repo}--${org}.aem.page${contentPath}`;
+}
+
+export function daPathToLiveUrl(daPath: string): string {
+  const { org, repo, contentPath } = parseDAPath(daPath);
+  return `https://${BRANCH}--${repo}--${org}.aem.live${contentPath}`;
+}
+
+let token: string | null = null;
+
+export function getToken(): string | null {
+  return token ?? import.meta.env.VITE_DA_TOKEN ?? null;
+}
+
+export function setToken(t: string | null): void {
+  token = t;
+}
+
+export interface PostDocResponse {
+  source?: { editUrl?: string };
+}
+
+export async function postDoc(dest: string, html: string): Promise<PostDocResponse> {
+  const t = getToken();
+  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
+  const fullpath = `${DA_API}/source${dest}${dest.endsWith('.html') ? '' : '.html'}`;
+  const blob = new Blob([html], { type: 'text/html' });
+  const body = new FormData();
+  body.append('data', blob);
+  const resp = await fetch(fullpath, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${t}` },
+    body,
+  });
+  if (!resp.ok) {
+    const errorText = await resp.text();
+    throw new Error(`${resp.status}: ${errorText}`);
+  }
+  return resp.json() as Promise<PostDocResponse>;
+}
+
+export async function createDocVersion(dest: string, label: string): Promise<void> {
+  const t = getToken();
+  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
+  const path = dest.endsWith('.html') ? dest : `${dest}.html`;
+  const resp = await fetch(`${DA_API}/versionsource${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${t}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ label }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(`version ${dest}: ${resp.status}: ${text}`);
+  }
+}
+
+export async function docExists(daPath: string): Promise<boolean> {
+  const t = getToken();
+  const headers: Record<string, string> = { 'cache-control': 'no-store' };
+  if (t) headers.Authorization = `Bearer ${t}`;
+  const path = daPath.endsWith('.html') ? daPath : `${daPath}.html`;
+  const resp = await fetch(`${DA_API}/source${path}`, { method: 'HEAD', headers });
+  if (resp.status === 404) return false;
+  if (resp.ok) return true;
+  throw new Error(`${resp.status}: ${daPath}`);
+}
+
+export async function cat(filePath: string): Promise<string> {
+  const t = getToken();
+  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
+  const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
+  const resp = await fetch(`${DA_API}/source${path}`, {
+    cache: 'no-store',
+    headers: { Authorization: `Bearer ${t}` },
+  });
+  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+  return resp.text();
+}
+
+export interface DaListItem {
+  path: string;
+  ext?: string;
+}
+
+export async function listDirectory(dirPath: string): Promise<DaListItem[]> {
+  const t = getToken();
+  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
+  const resp = await fetch(`${DA_API}/list${dirPath}`, {
+    headers: { Authorization: `Bearer ${t}` },
+  });
+  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+  return resp.json() as Promise<DaListItem[]>;
+}
+
+export interface DirectoryCheckResult {
+  valid: boolean;
+  error?: string;
+}
+
+export async function checkDirectoryExists(dirPath: string): Promise<DirectoryCheckResult> {
+  try {
+    await listDirectory(dirPath);
+    return { valid: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const is403 = msg.startsWith('403');
+    const is404 = msg.startsWith('404');
+    return {
+      valid: false,
+      error: is403
+        ? "Access denied — you don't have permission to write to this directory"
+        : is404
+        ? 'Directory not found — confirm the path exists in DA before generating'
+        : `Could not verify directory (${msg})`,
+    };
+  }
+}
+
+export async function fetchSheet(daPath: string): Promise<Record<string, string>[]> {
+  const t = getToken();
+  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
+  const path = daPath.endsWith('.json') ? daPath : `${daPath}.json`;
+  const resp = await fetch(`${DA_API}/source${path}`, {
+    cache: 'no-store',
+    headers: { Authorization: `Bearer ${t}` },
+  });
+  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+  const json = await resp.json() as { data?: Record<string, string>[] };
+  return json.data ?? [];
+}
+
+// Convert any DA-related URL to an admin source path (/org/repo/path)
+export function urlToSourcePath(url: string): string {
+  if (url.includes('da.live')) {
+    try {
+      const u = new URL(url);
+      if (u.hash.length > 1) {
+        const fragment = u.hash.slice(1);
+        return fragment.startsWith('/') ? fragment : `/${fragment}`;
+      }
+    } catch { /* fall through */ }
+    const hashIdx = url.indexOf('#');
+    if (hashIdx !== -1) {
+      const fragment = url.substring(hashIdx + 1);
+      return fragment.startsWith('/') ? fragment : `/${fragment}`;
+    }
+  }
+  if (url.startsWith('/')) return url;
+  // Relative path without scheme: org/repo/path
+  if (!url.includes('://')) return `/${url}`;
+  // AEM page/preview URL: https://main--repo--org.aem.page/path
+  try {
+    const u = new URL(url);
+    const sub = u.hostname.split('.')[0];
+    const parts = sub.split('--');
+    const org = parts[parts.length - 1];
+    const repo = parts[parts.length - 2];
+    return `/${org}/${repo}${u.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+export function extractPlaceholders(html: string): string[] {
+  const matches = [...html.matchAll(/\{\{([^}]+)\}\}/g)];
+  return [...new Set(matches.map((m) => m[1]))];
+}
+
+export interface TemplateValidation {
+  status: 'ready' | 'warning' | 'invalid';
+  placeholders: string[];
+  issues: string[];
+}
+
+export function validateTemplate(html: string): TemplateValidation {
+  const issues: string[] = [];
+  const placeholders = extractPlaceholders(html);
+
+  if (!/<main[\s>]/i.test(html)) {
+    issues.push('Missing <main> element — template may not be a valid DA document');
+  }
+  if (placeholders.length === 0) {
+    issues.push('No {{placeholder}} tokens found — verify the template has substitution markers');
+  }
+
+  const isInvalid = issues.some((i) => i.includes('Missing <main>'));
+  const status = isInvalid ? 'invalid' : issues.length > 0 ? 'warning' : 'ready';
+
+  return { status, issues, placeholders };
+}
+
+export async function triggerPreview(daPath: string, token: string): Promise<void> {
+  const { org, repo, contentPath } = parseDAPath(daPath);
+  const resp = await fetch(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error(`preview ${daPath}: ${resp.status}`);
+}
+
+export async function triggerPublish(daPath: string, token: string): Promise<void> {
+  const { org, repo, contentPath } = parseDAPath(daPath);
+  const resp = await fetch(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error(`publish ${daPath}: ${resp.status}`);
+}
+
+export async function triggerUnpublish(daPath: string, token: string): Promise<void> {
+  const { org, repo, contentPath } = parseDAPath(daPath);
+  const resp = await fetch(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error(`unpublish ${daPath}: ${resp.status}`);
+}
+
+export async function deleteDocument(daPath: string, token: string): Promise<void> {
+  const fullpath = `${DA_API}/source${daPath}${daPath.endsWith('.html') ? '' : '.html'}`;
+  const resp = await fetch(fullpath, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!resp.ok) throw new Error(`delete ${daPath}: ${resp.status}`);
+}
+
+export interface PageStatus {
+  live: boolean;
+  preview: boolean;
+  /** False when the status check failed (rate-limited/unreachable); live/preview are then not meaningful. */
+  ok: boolean;
+}
+
+export async function checkPageStatus(daPath: string, token: string): Promise<PageStatus> {
+  const { org, repo, contentPath } = parseDAPath(daPath);
+  const url = `${HLX_ADMIN}/status/${org}/${repo}/${BRANCH}${contentPath}`;
+  const MAX_ATTEMPTS = 4;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      // Rate-limited or transient server error — back off and retry rather than silently
+      // reporting the doc as "not published" (the AEM admin API throttles aggressively).
+      if (resp.status === 429 || resp.status >= 500) {
+        if (attempt < MAX_ATTEMPTS - 1) {
+          const retryAfter = Number(resp.headers.get('retry-after'));
+          const backoffMs = Number.isFinite(retryAfter) && retryAfter > 0
+            ? retryAfter * 1000
+            : 400 * 2 ** attempt;
+          await sleep(backoffMs + Math.random() * 300);
+          continue;
+        }
+        return { live: false, preview: false, ok: false };
+      }
+      if (!resp.ok) return { live: false, preview: false, ok: false };
+      const data = await resp.json() as { live?: { status: number }; preview?: { status: number } };
+      return { live: data.live?.status === 200, preview: data.preview?.status === 200, ok: true };
+    } catch {
+      // Network / CORS failure — the endpoint is unreachable from this origin, so retrying
+      // is futile (and, at scale, catastrophically slow). Fail fast; the caller marks it Unknown.
+      return { live: false, preview: false, ok: false };
+    }
+  }
+  return { live: false, preview: false, ok: false };
+}
+
+export async function batchCheckStatus(
+  paths: string[],
+  token: string,
+  concurrency: number = DEFAULT_CONCURRENCY,
+): Promise<Map<string, PageStatus>> {
+  const results = new Map<string, PageStatus>();
+  await runBatch(paths, async (p) => {
+    results.set(p, await checkPageStatus(p, token));
+  }, concurrency);
+  return results;
+}
+

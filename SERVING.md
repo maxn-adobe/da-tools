@@ -10,6 +10,7 @@ Each tool builds to `<tool>/dist/` and is served at that subfolder path:
 |---|---|---|
 | `doc-generator` | https://da.live/app/maxn-adobe/pdp-document-generator/doc-generator/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/doc-generator/dist/index.html |
 | `hello` | https://da.live/app/maxn-adobe/pdp-document-generator/hello/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/hello/dist/index.html |
+| `template-generator` | https://da.live/app/maxn-adobe/pdp-document-generator/template-generator/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/template-generator/dist/index.html |
 
 Append `?ref=<branch>` to the da.live URL (or use `<branch>--pdp-document-generator--maxn-adobe.aem.live` for the direct URL) to view a non-`main` branch.
 
