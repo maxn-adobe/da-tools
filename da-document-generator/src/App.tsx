@@ -161,6 +161,7 @@ export default function App() {
             selectedCount={selectedRows.length}
             previewRows={previewRows}
             onGenerate={handleGenerate}
+            onReset={() => setResults([])}
             results={results}
             actions={actions}
           />
