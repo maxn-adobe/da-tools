@@ -54,16 +54,17 @@ export default function OutputPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [output.outputDir]);
 
-  // A Document-name column is only selectable if EVERY row has a non-empty value — guarantees a
-  // non-empty slug for every generated doc, so no separate validation is needed.
+  // A Document-name column is only selectable if EVERY SELECTED row has a non-empty value —
+  // guarantees a non-empty slug for every generated doc, so no separate validation is needed.
+  // Recomputes as rows are checked/unchecked in the Data panel.
   const completeCols = useMemo(() => {
     const set = new Set<string>();
-    if (rows.length === 0) return set;
+    if (selectedRows.length === 0) return set;
     for (const c of columns) {
-      if (rows.every((r) => (r[c] ?? '').trim() !== '')) set.add(c);
+      if (selectedRows.every((r) => (r[c] ?? '').trim() !== '')) set.add(c);
     }
     return set;
-  }, [columns, rows]);
+  }, [columns, selectedRows]);
 
   // A stable example row (a random selected row) so the "i.e." preview shows a real resulting path.
   // Re-picks only when the data / selection changes, not on every keystroke.
@@ -88,19 +89,29 @@ export default function OutputPanel({
             />
           </label>
           {dir.loading && <p className="text-xs text-gray-400">Validating…</p>}
-          {!dir.loading && dir.valid && (
-            <a
-              href={`https://da.live/#${output.outputDir}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 break-all font-mono text-xs text-gray-500 hover:text-blue-600"
-            >
-              {output.outputDir}
-              <ExternalLinkIcon />
-            </a>
-          )}
-          {!dir.loading && !dir.valid && dir.error && (
-            <p className="text-xs text-red-600">{dir.error}</p>
+          {!dir.loading && (dir.valid || dir.error) && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                  dir.valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                }`}
+              >
+                {dir.valid ? 'Valid' : 'Invalid'}
+              </span>
+              {dir.valid ? (
+                <a
+                  href={`https://da.live/#${output.outputDir}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 break-all font-mono text-xs text-gray-500 hover:text-blue-600"
+                >
+                  {output.outputDir}
+                  <ExternalLinkIcon />
+                </a>
+              ) : (
+                <span className="text-xs text-red-600">{dir.error}</span>
+              )}
+            </div>
           )}
         </div>
 

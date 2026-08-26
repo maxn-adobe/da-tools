@@ -63,6 +63,13 @@ export default function App() {
   const outputValid = !!output.outputDir && !!output.slugColumn && outputDirValid;
   const canGenerate = !!template.html && selectedRows.length > 0 && outputValid && !generating;
 
+  // Rows that will be generated + their resolved output paths — previewed in the Generate panel
+  // before the author clicks Generate.
+  const previewRows = useMemo(
+    () => selectedRows.map((r) => ({ id: r._id, path: resolveOutputPath(r, output) })),
+    [selectedRows, output],
+  );
+
   async function handleGenerate() {
     const token = getToken();
     const tmplHtml = template.html;
@@ -134,7 +141,7 @@ export default function App() {
       </Step>
 
       {rows.length > 0 && (
-        <Step n={3} title="Output location">
+        <Step n={3} title="Add Output Directory">
           <OutputPanel
             columns={columns}
             rows={rows}
@@ -147,11 +154,12 @@ export default function App() {
       )}
 
       {rows.length > 0 && (
-        <Step n={4} title="Generate & results">
+        <Step n={4} title="Generate documents">
           <GeneratePanel
             canGenerate={canGenerate}
             generating={generating}
             selectedCount={selectedRows.length}
+            previewRows={previewRows}
             onGenerate={handleGenerate}
             results={results}
             actions={actions}
