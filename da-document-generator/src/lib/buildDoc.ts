@@ -13,13 +13,30 @@ export interface OutputConfig {
 }
 
 /**
+ * Normalize a value into a DA document name so the path we build matches exactly what DA stores and
+ * serves. DA's delivery keeps only lowercase a-z / 0-9 / dash (aem.live/docs/limits): every other run
+ * of characters collapses to a single dash, then leading/trailing dashes are trimmed. Pre-sanitizing
+ * here (rather than letting DA transform it after the POST) keeps our edit/preview/publish links from
+ * 404ing against the real, normalized page.
+ */
+export function sanitizeDocName(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
  * Resolve a row's DA output path: a fixed output directory + a per-row document name taken from a
- * data column (falls back to `doc-<_id>` when that column is empty). Returns '' if no directory.
+ * data column, sanitized to DA's rules (falls back to `doc-<_id>` when the column is empty or has no
+ * usable characters). The whole path is lowercased to mirror da-admin, which lowercases stored paths.
+ * Returns '' if no directory.
  */
 export function resolveOutputPath(row: CsvRow, cfg: OutputConfig): string {
-  if (!cfg.outputDir.trim()) return '';
-  const slug = (row[cfg.slugColumn] ?? '').trim() || `doc-${row['_id']}`;
-  return `${cfg.outputDir.replace(/\/$/, '')}/${slug}`;
+  const dir = cfg.outputDir.trim().replace(/\/+$/, '');
+  if (!dir) return '';
+  const name = sanitizeDocName((row[cfg.slugColumn] ?? '').trim()) || `doc-${row['_id']}`;
+  return `${dir}/${name}`.toLowerCase();
 }
 
 // ---------------------------------------------------------------------------

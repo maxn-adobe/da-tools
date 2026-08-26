@@ -85,8 +85,7 @@ export default function DataUpload({
             <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
               <p className="font-medium text-amber-800">
                 {unmatched.length} {unmatched.length === 1 ? 'column has' : 'columns have'} no matching{' '}
-                <code className="rounded bg-amber-100 px-1">{'{{placeholder}}'}</code> and will be ignored —
-                their data is dropped:
+                <code className="rounded bg-amber-100 px-1">{'{{placeholder}}'}</code> in the template, and will be ignored.
               </p>
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {unmatched.map((c) => (

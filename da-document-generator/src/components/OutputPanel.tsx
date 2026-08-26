@@ -136,7 +136,7 @@ export default function OutputPanel({
       </div>
 
       {examplePath && (
-        <p className="text-xs text-gray-400">
+        <p className="pl-2 text-xs text-gray-400">
           i.e. <span className="font-mono text-gray-500">{examplePath}</span>
         </p>
       )}
