@@ -36,6 +36,15 @@ type BulkOp = 'idle' | 'previewing' | 'publishing' | 'unpublishing' | 'deleting'
 
 type UrlExportKind = 'document' | 'preview' | 'live';
 
+// Which action buttons were visible when a bulk op started — kept so they persist (disabled)
+// through the op instead of vanishing as row stages change under them.
+interface FrozenButtons {
+  preview: boolean;
+  publish: boolean;
+  unpublish: boolean;
+  delete: boolean;
+}
+
 // Stages at which the source document exists in DA — used to decide which rows contribute a
 // document link to the URL export.
 const DOC_EXISTS_STAGES: ReadonlySet<RowStage> = new Set<RowStage>([
@@ -62,6 +71,7 @@ export default function GeneratePanel({
   const [bulkOp, setBulkOp] = useState<BulkOp>('idle');
   const [bulkTotal, setBulkTotal] = useState(0);
   const bulkTargets = useRef<Set<string>>(new Set());
+  const [frozen, setFrozen] = useState<FrozenButtons | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [existenceStatus, setExistenceStatus] = useState<Record<string, ExistenceCheck>>({});
@@ -122,6 +132,16 @@ export default function GeneratePanel({
   const existingCount = previewRows.filter((pr) => existenceStatus[pr.path] === 'exists').length;
   const running = generating || bulkOp !== 'idle';
 
+  // True while the pre-generation existence sweep is still resolving (some path unchecked or
+  // in-flight). Generate stays disabled until the final duplicate count is known.
+  const existenceChecking =
+    results.length === 0 &&
+    previewRows.some((pr) => {
+      if (!pr.path) return false;
+      const s = existenceStatus[pr.path];
+      return s === undefined || s === 'checking';
+    });
+
   // Bulk-button visibility + labels are derived from the result stages.
   const counts = {
     generated: results.filter((r) =>
@@ -135,13 +155,16 @@ export default function GeneratePanel({
     deletable: results.filter((r) => DELETABLE_STAGES.includes(r.stage)).length,
   };
 
-  const showPreviewBtn = !running && counts.previewable > 0;
-  const showPublishBtn = !running && counts.publishable > 0;
-  const showUnpublishBtn = !running && counts.published >= 2;
-  const showDeleteBtn = !running && counts.deletable >= 2;
+  // When a bulk op is running, keep the frozen set visible (disabled); otherwise derive from counts
+  // (and hide during generation, when `running` is true but no bulk op is active).
+  const showPreviewBtn = frozen ? frozen.preview : !running && counts.previewable > 0;
+  const showPublishBtn = frozen ? frozen.publish : !running && counts.publishable > 0;
+  const showUnpublishBtn = frozen ? frozen.unpublish : !running && counts.published >= 2;
+  const showDeleteBtn = frozen ? frozen.delete : !running && counts.deletable >= 2;
 
   // How many of the current bulk op's targets have reached a terminal state — drives the "X / N"
-  // progress label. Deleted rows are removed from `results`, so delete counts what's left.
+  // progress label inside the active button. Deleted rows are removed from `results`, so delete
+  // counts what's left.
   function bulkDone(): number {
     const ids = bulkTargets.current;
     switch (bulkOp) {
@@ -158,12 +181,23 @@ export default function GeneratePanel({
     }
   }
 
-  async function runBulk(op: Exclude<BulkOp, 'idle'>, targets: RowResult[], fn: (rows: RowResult[]) => Promise<void>) {
+  async function runBulk(
+    op: Exclude<BulkOp, 'idle'>,
+    targets: RowResult[],
+    fn: (rows: RowResult[]) => Promise<void>,
+  ) {
+    setFrozen({
+      preview: counts.previewable > 0 || op === 'previewing',
+      publish: counts.publishable > 0 || op === 'publishing',
+      unpublish: counts.published >= 2 || op === 'unpublishing',
+      delete: counts.deletable >= 2 || op === 'deleting',
+    });
     bulkTargets.current = new Set(targets.map((t) => t.id));
     setBulkTotal(targets.length);
     setBulkOp(op);
     await fn(targets);
     setBulkOp('idle');
+    setFrozen(null);
   }
 
   const handlePreview = () =>
@@ -183,6 +217,7 @@ export default function GeneratePanel({
     setExistenceStatus({});
     checkedPaths.current.clear();
     setBulkOp('idle');
+    setFrozen(null);
   }
 
   function collectUrls(kind: UrlExportKind): string[] {
@@ -213,7 +248,10 @@ export default function GeneratePanel({
     URL.revokeObjectURL(url);
   }
 
-  const btnBase = 'rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors';
+  // Shared classes for the colored bulk-action buttons. `cursor-pointer` so they read as clickable;
+  // disabled while any op runs.
+  const btnBase =
+    'rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60';
 
   return (
     <section className="flex flex-col gap-3">
@@ -222,7 +260,7 @@ export default function GeneratePanel({
           <button
             type="button"
             onClick={() => setResetModalOpen(true)}
-            className="rounded-lg border border-gray-200 bg-gray-100 px-5 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-200"
+            className="cursor-pointer rounded-lg border border-gray-200 bg-gray-100 px-5 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-200"
           >
             Reset results
           </button>
@@ -231,8 +269,8 @@ export default function GeneratePanel({
         <button
           type="button"
           onClick={onGenerate}
-          disabled={!canGenerate || running}
-          className="w-max rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={!canGenerate || running || existenceChecking}
+          className="w-max cursor-pointer rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {generating
             ? `Generating… ${counts.generated + counts.error} / ${results.length}`
@@ -240,39 +278,55 @@ export default function GeneratePanel({
         </button>
 
         {showPreviewBtn && (
-          <button type="button" onClick={handlePreview} className={`${btnBase} bg-indigo-600 hover:bg-indigo-700`}>
-            Preview {counts.previewable} document{counts.previewable === 1 ? '' : 's'}
+          <button
+            type="button"
+            onClick={handlePreview}
+            disabled={running}
+            className={`${btnBase} bg-indigo-600 hover:bg-indigo-700`}
+          >
+            {bulkOp === 'previewing'
+              ? `Previewing… ${bulkDone()} / ${bulkTotal}`
+              : `Preview ${counts.previewable} document${counts.previewable === 1 ? '' : 's'}`}
           </button>
-        )}
-        {bulkOp === 'previewing' && (
-          <span className="text-sm font-medium text-indigo-600">Previewing… {bulkDone()} / {bulkTotal}</span>
         )}
 
         {showPublishBtn && (
-          <button type="button" onClick={handlePublish} className={`${btnBase} bg-green-600 hover:bg-green-700`}>
-            Publish {counts.publishable} document{counts.publishable === 1 ? '' : 's'}
+          <button
+            type="button"
+            onClick={handlePublish}
+            disabled={running}
+            className={`${btnBase} bg-green-600 hover:bg-green-700`}
+          >
+            {bulkOp === 'publishing'
+              ? `Publishing… ${bulkDone()} / ${bulkTotal}`
+              : `Publish ${counts.publishable} document${counts.publishable === 1 ? '' : 's'}`}
           </button>
-        )}
-        {bulkOp === 'publishing' && (
-          <span className="text-sm font-medium text-green-600">Publishing… {bulkDone()} / {bulkTotal}</span>
         )}
 
         {showUnpublishBtn && (
-          <button type="button" onClick={handleUnpublish} className={`${btnBase} bg-red-600 hover:bg-red-700`}>
-            Unpublish {counts.published} documents
+          <button
+            type="button"
+            onClick={handleUnpublish}
+            disabled={running}
+            className={`${btnBase} bg-red-600 hover:bg-red-700`}
+          >
+            {bulkOp === 'unpublishing'
+              ? `Unpublishing… ${bulkDone()} / ${bulkTotal}`
+              : `Unpublish ${counts.published} documents`}
           </button>
-        )}
-        {bulkOp === 'unpublishing' && (
-          <span className="text-sm font-medium text-red-600">Unpublishing… {bulkDone()} / {bulkTotal}</span>
         )}
 
         {showDeleteBtn && (
-          <button type="button" onClick={() => setDeleteModalOpen(true)} className={`${btnBase} bg-red-700 hover:bg-red-800`}>
-            Delete {counts.deletable} documents
+          <button
+            type="button"
+            onClick={() => setDeleteModalOpen(true)}
+            disabled={running}
+            className={`${btnBase} bg-red-700 hover:bg-red-800`}
+          >
+            {bulkOp === 'deleting'
+              ? `Deleting… ${bulkDone()} / ${bulkTotal}`
+              : `Delete ${counts.deletable} documents`}
           </button>
-        )}
-        {bulkOp === 'deleting' && (
-          <span className="text-sm font-medium text-red-700">Deleting… {bulkDone()} / {bulkTotal}</span>
         )}
 
         {results.length > 0 && (
@@ -289,7 +343,7 @@ export default function GeneratePanel({
               <button
                 type="button"
                 onClick={() => setShowExportMenu((p) => !p)}
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
+                className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-50"
               >
                 Export URLs
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4 text-gray-400">
@@ -313,7 +367,7 @@ export default function GeneratePanel({
                             type="button"
                             disabled={count === 0}
                             onClick={() => handleExportUrls(kind)}
-                            className="flex w-full items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-white"
+                            className="flex w-full cursor-pointer items-center justify-between px-4 py-2.5 text-left text-sm text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:text-gray-300 disabled:hover:bg-white"
                           >
                             <span>{label}</span>
                             <span className="text-gray-400">{count}</span>
@@ -345,6 +399,7 @@ export default function GeneratePanel({
           <table className="min-w-full text-left text-sm">
             <thead className="bg-gray-50 text-xs text-gray-600">
               <tr>
+                <th className="px-3 py-2 font-medium">#</th>
                 <th className="px-3 py-2 font-medium">Output path</th>
                 <th className="px-3 py-2 font-medium">Doc</th>
                 <th className="px-3 py-2 font-medium">Preview</th>
@@ -354,8 +409,9 @@ export default function GeneratePanel({
             </thead>
             <tbody className="divide-y divide-gray-100">
               {preview
-                ? previewRows.map((pr) => (
+                ? previewRows.map((pr, i) => (
                     <tr key={pr.id} className="opacity-60">
+                      <td className="px-3 py-1.5 text-xs tabular-nums text-gray-500">{i + 1}</td>
                       <td className="px-3 py-1.5 font-mono text-xs">
                         <span className="inline-flex items-center gap-2">
                           {existenceStatus[pr.path] === 'exists' ? (
@@ -380,9 +436,10 @@ export default function GeneratePanel({
                       <td className="px-3 py-1.5 text-xs text-gray-300">—</td>
                     </tr>
                   ))
-                : results.map((r) => (
+                : results.map((r, i) => (
                     <Fragment key={r.id}>
                       <tr>
+                        <td className="px-3 py-1.5 text-xs tabular-nums text-gray-500">{i + 1}</td>
                         <td className="px-3 py-1.5 font-mono text-xs text-gray-700">
                           <span className="inline-flex items-center gap-2">
                             {r.editUrl ? (
@@ -420,7 +477,7 @@ export default function GeneratePanel({
                       </tr>
                       {expanded.has(r.id) && r.qa && (
                         <tr className="bg-gray-50">
-                          <td colSpan={5} className="px-3 py-2">
+                          <td colSpan={6} className="px-3 py-2">
                             <ul className="flex flex-col gap-1 text-xs">
                               {r.qa.checks.map((c) => (
                                 <li key={c.id} className={c.pass ? 'text-green-700' : 'text-amber-700'}>
@@ -442,7 +499,7 @@ export default function GeneratePanel({
         <ConfirmModal
           title="Reset results?"
           confirmLabel="Reset"
-          confirmClassName="rounded-xl bg-gray-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-900"
+          confirmClassName="cursor-pointer rounded-xl bg-gray-800 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-gray-900"
           onCancel={() => setResetModalOpen(false)}
           onConfirm={handleReset}
         >
