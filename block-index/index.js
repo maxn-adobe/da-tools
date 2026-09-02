@@ -2,6 +2,10 @@
 import DA_SDK from 'https://da.live/nx/utils/sdk.js';
 /* eslint-enable import/no-unresolved */
 import { ls, collectDocs, cat, readJson, writeJson, fetchPublishedPaths } from '../shared/da-api.js';
+import { enhanceAppLinks } from '../shared/nav.js';
+
+// Make the "All Tools" back-link update the outer da.live URL when embedded in da.live.
+enhanceAppLinks();
 
 const SCAN_ROOT = '/adobecom/da-express-milo';
 const AUDIT_DIR = '/adobecom/da-express-milo/drafts/da-test-tool-maxn-01';

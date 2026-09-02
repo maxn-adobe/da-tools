@@ -2,6 +2,10 @@
 import DA_SDK from 'https://da.live/nx/utils/sdk.js';
 /* eslint-enable import/no-unresolved */
 import { collectDocs } from '../shared/da-api.js';
+import { enhanceAppLinks } from '../shared/nav.js';
+
+// Make the "All Tools" back-link update the outer da.live URL when embedded in da.live.
+enhanceAppLinks();
 
 const $status = document.getElementById('status');
 const $result = document.getElementById('result');

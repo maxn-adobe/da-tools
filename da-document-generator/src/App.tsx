@@ -4,6 +4,7 @@ import { cat, validateTemplate, docExists, postDoc, createDocVersion, getToken }
 import { runBatch } from './lib/concurrency';
 import { buildBakedDoc, resolveOutputPath, runBakeQa } from './lib/buildDoc';
 import { useDaDocumentActions } from './hooks/useDaDocumentActions';
+import { useBeforeUnload } from './hooks/useBeforeUnload';
 import TemplatePanel from './components/TemplatePanel';
 import DataUpload from './components/DataUpload';
 import OutputPanel from './components/OutputPanel';
@@ -24,6 +25,10 @@ export default function App() {
   const [outputDirValid, setOutputDirValid] = useState(false);
   const [results, setResults] = useState<RowResult[]>([]);
   const [generating, setGenerating] = useState(false);
+
+  // Warn before leaving the page once data has been uploaded, so an author doesn't lose
+  // uploaded rows or generated results by closing/reloading (mirrors pdp-document-generator).
+  useBeforeUnload(rows.length > 0);
 
   const columns = useMemo(
     () => (rows.length ? Object.keys(rows[0]).filter((k) => k !== '_id') : []),
