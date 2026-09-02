@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>DA Tools</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <link rel="icon" href="data:,">
+    <style>
+      body { font-family: sans-serif; margin: 2rem; max-width: 480px; }
+      h1 { margin-bottom: 1.5rem; }
+      .card {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border: 1px solid #e0e0e0;
+        border-radius: 10px;
+        padding: 1rem 1.25rem;
+        margin: 0.5rem 0;
+        text-decoration: none;
+        color: inherit;
+        background: #fafafa;
+        transition: background 0.12s, box-shadow 0.12s;
+      }
+      .card:hover { background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,0.09); }
+      .card-text strong { display: block; font-size: 1rem; margin-bottom: 0.2rem; }
+      .card-text p { margin: 0; color: #666; font-size: 0.85rem; }
+      .chevron { font-size: 1.4rem; color: #bbb; flex-shrink: 0; margin-left: 1rem; }
+    </style>
+  </head>
+  <body>
+    <h1>DA Tools</h1>
+    <a class="card" href="./da-document-generator/dist/index.html">
+      <div class="card-text">
+        <strong>DA Document Generator</strong>
+        <p>Fill a template's {{tokens}} from a spreadsheet or JSON file and write the documents to DA.</p>
+      </div>
+      <span class="chevron">›</span>
+    </a>
+    <a class="card" href="./pdp-document-generator/dist/index.html">
+      <div class="card-text">
+        <strong>PDP Document Generator</strong>
+        <p>Bulk-generate DA product pages from product data and DA document templates.</p>
+      </div>
+      <span class="chevron">›</span>
+    </a>
+    <a class="card" href="./block-finder/index.html">
+      <div class="card-text">
+        <strong>Block Finder</strong>
+        <p>Search for a block name and see every page in the /express tree that uses it.</p>
+      </div>
+      <span class="chevron">›</span>
+    </a>
+    <a class="card" href="./document-counter/index.html">
+      <div class="card-text">
+        <strong>Document Counter</strong>
+        <p>Count how many HTML documents exist under any given directory path.</p>
+      </div>
+      <span class="chevron">›</span>
+    </a>
+    <a class="card" href="./block-index/index.html">
+      <div class="card-text">
+        <strong>Block Index</strong>
+        <p>Scan the entire /express tree and build a full index of every block in use.</p>
+      </div>
+      <span class="chevron">›</span>
+    </a>
+  </body>
+</html>

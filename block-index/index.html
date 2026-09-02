@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>DA Block Index</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <link rel="icon" href="data:,">
+    <style>
+      :root {
+      --express-result-border-color: rgba(191, 146, 13, 0.25);
+      --milo-result-border-color: rgba(191, 56, 175, 0.2);
+      }
+      body { font-family: sans-serif; margin: 1rem 2rem; }
+      .back {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        color: #888;
+        text-decoration: none;
+        font-size: 0.92rem;
+        margin-bottom: 1.25rem;
+      }
+      .back::before { content: '‹'; font-size: 1.5em; line-height: 1; margin-top: -0.06em; }
+      .back:hover { color: #000; }
+      .toolbar { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+      .meta { color: #888; font-size: 0.9rem; }
+      #status { color: #555; min-height: 1.2em; margin-bottom: 0.5rem; }
+
+      /* Directory scan section */
+      #dir-details {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 0.5rem 1rem 0.6rem;
+        margin-bottom: 1rem;
+        background: #fafafa;
+      }
+      #dir-details > summary {
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 0.95rem;
+        padding: 0.25rem 0;
+        list-style: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: #333;
+      }
+      #dir-details > summary::-webkit-details-marker { display: none; }
+      #dir-details > summary::after { content: '▸'; color: #aaa; font-size: 0.9em; }
+      #dir-details[open] > summary::after { content: '▾'; }
+      #dir-list { margin-top: 0.35rem; }
+      .dir-row {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        padding: 0.3rem 0;
+        border-top: 1px solid #efefef;
+        font-size: 0.88rem;
+      }
+      .dir-name { font-family: monospace; min-width: 7rem; color: #333; }
+      .dir-meta { flex: 1; color: #777; }
+      .dir-meta.dim { color: #bbb; }
+      .dir-btn { padding: 0.15rem 0.5rem; font-size: 0.78rem; cursor: pointer; }
+
+      /* Block index legend */
+      #legend-row { display: flex; justify-content: space-between; align-items: center; margin: 0.4rem 0 0.6rem; }
+      #legend { display: flex; gap: 2rem; }
+      .legend-express-square { font-size: 2rem; line-height: 0; }
+      .legend-express { display: flex; align-items: center; color: #fec311; }
+      .legend-milo { display: flex; align-items: center; color: #fe4be9; }
+      .legend-unknown { display: flex; align-items: center; color: #999; }
+      #sort-select { font-size: 0.85rem; padding: 0.2rem 0.4rem; border: 1px solid #ddd; border-radius: 4px; background: #fff; color: #555; cursor: pointer; }
+
+      /* Block accordions */
+      #results { margin-top: 0.25rem; }
+      #results details {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 0;
+        margin: 0.4rem 0;
+        background: #fafafa;
+        will-change: transform;
+      }
+      #results details[open] { background: #fff; }
+      #results details.repo-express { background: rgba(254, 195, 17, 0.1); border-color: var(--express-result-border-color); }
+      #results details.repo-milo { background: rgba(254, 75, 233, 0.08); border-color: var(--milo-result-border-color) }
+      #results summary {
+        cursor: pointer;
+        font-weight: 600;
+        list-style: none;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.6rem 1rem;
+      }
+      #results details.repo-express[open] summary {
+        border-bottom: 1px solid var(--express-result-border-color)
+      }
+      #results details.repo-milo[open] summary {
+        border-bottom: 1px solid var(--milo-result-border-color)
+      }
+      #results summary::-webkit-details-marker { display: none; }
+      #results summary::after { content: '▸'; color: #aaa; flex-shrink: 0; }
+      #results details[open] summary::after { content: '▾'; }
+      .summary-left { flex: 1; display: inline-flex; align-items: center; gap: 0.4rem; font-weight: 600; }
+      .copy-btn { background: none; border: none; padding: 0; cursor: pointer; color: #bbb; display: flex; align-items: center; flex-shrink: 0; line-height: 0; }
+      .copy-btn:hover { color: #555; }
+      .ks-btn { display: flex; align-items: center; flex-shrink: 0; line-height: 0; color: #bbb; text-decoration: none; }
+      .ks-btn:not(.disabled):hover { color: #555; }
+      .ks-btn.disabled { color: #e0e0e0; cursor: default; }
+      .summary-count { font-weight: 400; color: inherit; }
+      .override-badge {
+        font-size: 0.7rem;
+        font-weight: 500;
+        background: rgba(255, 130, 160, 0.25);
+        color: #b03060;
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+        flex-shrink: 0;
+      }
+      .block-paths {
+        font-family: monospace;
+        font-size: 0.82rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .block-paths li { display: flex; align-items: center; padding: 12px 1rem; color: #555; border-bottom: 1px solid var(--express-result-border-color); }
+      
+      .block-paths li:last-child { border-bottom: none; }
+      .path-link { color: inherit; text-decoration: none; }
+      .path-link:hover { text-decoration: underline; }
+      .published-badge { color: #2d9e2d; margin-left: 1rem; }
+      .published-badge:hover { color: #1a7a1a; }
+      .published-count { color: #2d9e2d; font-weight: 400; }
+    </style>
+    <script src="https://da.live/nx/utils/sdk.js" type="module"></script>
+    <script src="./index.js" type="module"></script>
+  </head>
+  <body>
+    <a href="../index.html" class="back">All Tools</a>
+    <h2>Block Index</h2>
+    <div class="toolbar">
+      <button id="scan-all-btn">Scan All</button>
+      <button id="status-btn" style="display:none">Check Status</button>
+    </div>
+    <p id="status"></p>
+    <details id="dir-details">
+      <summary>Directory Scans</summary>
+      <div id="dir-list"></div>
+    </details>
+    <p id="block-count" class="meta"></p>
+    <div id="legend-row">
+      <div id="legend"></div>
+      <select id="sort-select">
+        <option value="usage">By Usage</option>
+        <option value="repo">By Repo</option>
+        <option value="alpha">Alphabetical</option>
+      </select>
+    </div>
+    <div id="results"></div>
+  </body>
+</html>

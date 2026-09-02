@@ -4,12 +4,16 @@ This repo is a container for standalone Vite/React **tools** (it does **not** us
 
 ## URLs
 
-Each tool builds to `<tool>/dist/` and is served at that subfolder path:
+The repo root serves a landing page; each tool is served at its own subfolder path. Built Vite tools live under `<tool>/dist/`; static (no-build) tools are served directly from `<tool>/`:
 
 | Tool | In da.live (primary) | Direct (delivery) |
 |---|---|---|
+| DA Tools home | https://da.live/app/maxn-adobe/da-tools/index | https://main--da-tools--maxn-adobe.aem.live/index.html |
 | `pdp-document-generator` | https://da.live/app/maxn-adobe/da-tools/pdp-document-generator/dist/index | https://main--da-tools--maxn-adobe.aem.live/pdp-document-generator/dist/index.html |
 | `da-document-generator` | https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index | https://main--da-tools--maxn-adobe.aem.live/da-document-generator/dist/index.html |
+| `block-finder` (static) | https://da.live/app/maxn-adobe/da-tools/block-finder/index | https://main--da-tools--maxn-adobe.aem.live/block-finder/index.html |
+| `document-counter` (static) | https://da.live/app/maxn-adobe/da-tools/document-counter/index | https://main--da-tools--maxn-adobe.aem.live/document-counter/index.html |
+| `block-index` (static) | https://da.live/app/maxn-adobe/da-tools/block-index/index | https://main--da-tools--maxn-adobe.aem.live/block-index/index.html |
 
 Append `?ref=<branch>` to the da.live URL (or use `<branch>--da-tools--maxn-adobe.aem.live` for the direct URL) to view a non-`main` branch.
 
@@ -30,6 +34,16 @@ Each tool is a self-contained Vite app that builds into its own `<tool>/dist/` f
 The one rule: each tool's production **`base` must equal its served subfolder** (`/<tool>/dist/`), so the built HTML references its assets with correct absolute paths. In dev the base is `/`.
 
 This mirrors the proven `adobecom/da-express-milo` pattern, which serves tools at `tools/<tool>/dist/index.html`.
+
+## Static (no-build) tools
+
+Some tools need no framework and are served **directly from their own folder** — no `dist/`, no Vite, no `base`:
+
+- `<tool>/index.html` — hand-authored entry, served at `<tool>/index` (e.g. `block-finder/index.html` → `…/da-tools/block-finder/index`).
+- `<tool>/index.js` — a plain browser ES module loaded via `<script type="module" src="./index.js">`; it pulls the DA SDK with `import DA_SDK from 'https://da.live/nx/utils/sdk.js'` (the same auth-token handshake the Vite tools use).
+- All internal links are **relative** (`./…`, `../…`), so these tools need no `base` and can be relocated as a group. `block-finder/`, `document-counter/`, and `block-index/` also share `../shared/da-api.js` and link back to the home page via `../index.html`.
+
+The repo-root `index.html` landing page is itself such a static file — served at `…/da-tools/index`.
 
 > **Note (previously believed otherwise):** an earlier iteration of the doc generator placed its built entry at the repo **root** because a subfolder `/dist/index.html` appeared to 404 on the preview tier. That 404 was a **Code Sync sync-timing artifact** (the file wasn't on the code bus yet), *not* a platform rule. Subfolder `.html` files serve fine — confirmed on this repo (`/pdp-document-generator/dist/index.html`, `/da-document-generator/dist/index.html`) and on the reference repo. No root-entry workaround or postbuild step is needed.
 
@@ -57,7 +71,7 @@ curl -sS -D - -o /dev/null "https://main--da-tools--maxn-adobe.aem.live/da-docum
 |---|---|---|
 | `Missing configuration` / `no such site` | Site not registered | Do setup step 2 |
 | `failed to load /<tool>/dist/… from code-bus: 404` | The file isn't on the code bus — either not committed/pushed, or Code Sync hasn't synced yet | Confirm the file is committed under `<tool>/dist/`, push, wait ~1–2 min; if Code Sync shows no activity, re-add the repo (step 3) |
-| `failed to load /index.md from content-bus: 404` (on `/`) | Healthy — config resolves, there's just no homepage doc | n/a |
+| `failed to load /index.md from content-bus: 404` (on bare `/`) | Harmless — these tools don't use the content pipeline. The landing page is a **code-bus** file at `/index.html`, reached as `…/da-tools/index` | Open `…/da-tools/index` (not bare `/`) |
 
 ## Admin API auth
 
