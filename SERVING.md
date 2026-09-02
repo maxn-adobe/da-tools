@@ -8,10 +8,10 @@ Each tool builds to `<tool>/dist/` and is served at that subfolder path:
 
 | Tool | In da.live (primary) | Direct (delivery) |
 |---|---|---|
-| `pdp-document-generator` | https://da.live/app/maxn-adobe/pdp-document-generator/pdp-document-generator/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/pdp-document-generator/dist/index.html |
-| `da-document-generator` | https://da.live/app/maxn-adobe/pdp-document-generator/da-document-generator/dist/index | https://main--pdp-document-generator--maxn-adobe.aem.live/da-document-generator/dist/index.html |
+| `pdp-document-generator` | https://da.live/app/maxn-adobe/da-tools/pdp-document-generator/dist/index | https://main--da-tools--maxn-adobe.aem.live/pdp-document-generator/dist/index.html |
+| `da-document-generator` | https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index | https://main--da-tools--maxn-adobe.aem.live/da-document-generator/dist/index.html |
 
-Append `?ref=<branch>` to the da.live URL (or use `<branch>--pdp-document-generator--maxn-adobe.aem.live` for the direct URL) to view a non-`main` branch.
+Append `?ref=<branch>` to the da.live URL (or use `<branch>--da-tools--maxn-adobe.aem.live` for the direct URL) to view a non-`main` branch.
 
 ## How it works (the parts that matter)
 
@@ -40,17 +40,17 @@ The site is registered once for the **whole repo**; individual tools need no ext
 1. Add `fstab.yaml` at the repo root, on the default branch (`main`).
 2. Register the EDS site **once** via the Admin API:
    ```
-   PUT https://admin.hlx.page/config/maxn-adobe/sites/pdp-document-generator.json
+   PUT https://admin.hlx.page/config/maxn-adobe/sites/da-tools.json
    x-auth-token: <token from an admin.hlx.page/auth/adobe login>
-   {"code":{"owner":"maxn-adobe","repo":"pdp-document-generator"},
-    "content":{"source":{"url":"https://content.da.live/maxn-adobe/pdp-document-generator/","type":"markup"}}}
+   {"code":{"owner":"maxn-adobe","repo":"da-tools"},
+    "content":{"source":{"url":"https://content.da.live/maxn-adobe/da-tools/","type":"markup"}}}
    ```
 3. Install **AEM Code Sync** on the repo. If it isn't syncing (no commit activity; delivery returns `code-bus: 404`), **remove + re-add** the repo in the app's settings to force the initial sync.
 
 ## Troubleshooting (read the `x-error` response header)
 
 ```bash
-curl -sS -D - -o /dev/null "https://main--pdp-document-generator--maxn-adobe.aem.live/da-document-generator/dist/index.html" | grep -i "x-error\|HTTP/"
+curl -sS -D - -o /dev/null "https://main--da-tools--maxn-adobe.aem.live/da-document-generator/dist/index.html" | grep -i "x-error\|HTTP/"
 ```
 
 | `x-error` | Meaning | Fix |

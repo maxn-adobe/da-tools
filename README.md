@@ -1,4 +1,4 @@
-# pdp-document-generator — DA tools container
+# da-tools — DA tools container
 
 A container repository that hosts **multiple standalone DA (Document Authoring) tools** side-by-side. Each tool is its own self-contained Vite + React app in its own top-level folder, built to `<tool>/dist/`, served as static files from AEM Edge Delivery Services (the "code bus"), and embedded in DA at its own URL.
 
@@ -6,15 +6,15 @@ A container repository that hosts **multiple standalone DA (Document Authoring) 
 
 | Tool | Folder | Opens in DA at |
 |---|---|---|
-| **PDP Document Generator** — bulk-generate DA pages from product data + templates | [`pdp-document-generator/`](./pdp-document-generator/) | https://da.live/app/maxn-adobe/pdp-document-generator/pdp-document-generator/dist/index |
-| **DA Document Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`da-document-generator/`](./da-document-generator/) | https://da.live/app/maxn-adobe/pdp-document-generator/da-document-generator/dist/index |
+| **PDP Document Generator** — bulk-generate DA pages from product data + templates | [`pdp-document-generator/`](./pdp-document-generator/) | https://da.live/app/maxn-adobe/da-tools/pdp-document-generator/dist/index |
+| **DA Document Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`da-document-generator/`](./da-document-generator/) | https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index |
 
 Append `?ref=<branch>` to preview a non-`main` branch, e.g. `…/da-document-generator/dist/index?ref=my-branch`.
 
 ## Repository layout
 
 ```
-pdp-document-generator/                 (repo)
+da-tools/                 (repo)
 ├─ pdp-document-generator/  # PDP tool — bulk-generate product pages (Zazzle)
 │  ├─ src/  index.html  vite.config.ts  package.json
 │  └─ dist/{ index.html, assets/ }   # built output (committed)
@@ -27,8 +27,6 @@ pdp-document-generator/                 (repo)
 ```
 
 Each tool is independent: its own `package.json`, `node_modules`, Vite config, and build. There is intentionally **no** root `package.json` — you work inside a tool's folder.
-
-> Note: the repo and the PDP tool folder share the name `pdp-document-generator`, so that tool's URL contains the name twice (`…/pdp-document-generator/pdp-document-generator/dist/index`) — that's expected.
 
 ## Working on a tool
 
@@ -49,7 +47,7 @@ The built `dist/` is committed because AEM Code Sync serves the repo's files dir
    const base = command === 'serve' ? '/' : '/my-tool/dist/'
    ```
 3. `npm install && npm run build` inside the folder, commit `my-tool/` (including `dist/`), and push.
-4. It's live at `https://da.live/app/maxn-adobe/pdp-document-generator/my-tool/dist/index`.
+4. It's live at `https://da.live/app/maxn-adobe/da-tools/my-tool/dist/index`.
 
 No per-tool site registration is needed — the whole repo is one EDS site (see [SERVING.md](./SERVING.md)).
 
