@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>GitHub Package Comparator</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <link rel="icon" href="data:,">
+    <style>
+      body { font-family: sans-serif; margin: 1rem 2rem; }
+      .back {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.25rem;
+        color: #888;
+        text-decoration: none;
+        font-size: 0.92rem;
+        margin-bottom: 1.25rem;
+      }
+      .back::before { content: '‹'; font-size: 1.5em; line-height: 1; margin-top: -0.06em; }
+      .back:hover { color: #000; }
+
+      /* Milo/Spectrum design tokens that github-package-comparator.css references but that are
+         only defined by the Milo runtime stylesheet on EDS pages. Concrete standalone values so
+         the block renders correctly outside that runtime. */
+      :root {
+        --spacing-200: 8px;
+        --spacing-250: 10px;
+        --spacing-300: 12px;
+        --spacing-400: 16px;
+        --spacing-500: 20px;
+        --spacing-600: 24px;
+        --color-white: #ffffff;
+        --color-gray-100: #f5f5f5;
+        --color-gray-200: #e1e1e1;
+        --color-gray-700: #4b4b4b;
+        --color-gray-800: #2c2c2c;
+        --color-info-accent: #1473e6;
+        --body-font-family: system-ui, sans-serif;
+        --body-font-size-m: 15px;
+        --heading-font-size-m: 20px;
+        --heading-font-weight: 700;
+      }
+    </style>
+    <link rel="stylesheet" href="./github-package-comparator.css">
+    <script src="./index.js" type="module"></script>
+  </head>
+  <body>
+    <a href="../index.html" class="back" data-app-path="github-package-comparator/index">All Tools</a>
+    <div id="app"></div>
+  </body>
+</html>

@@ -16,7 +16,7 @@ function App() {
   return (
     <div className={`app${view === 'schema-bootstrap' ? ' app--wide' : ''}`}>
       <header className="app-header">
-        <h1>DA Bulk Document Updater</h1>
+        <h1>Block Signature Migrator</h1>
         <nav className="app-tabs">
           {TABS.map((tab) => (
             <button

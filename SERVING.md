@@ -11,9 +11,11 @@ The repo root serves a landing page; each tool is served at its own subfolder pa
 | DA Tools home | https://da.live/app/maxn-adobe/da-tools/index | https://main--da-tools--maxn-adobe.aem.live/index.html |
 | `pdp-document-generator` | https://da.live/app/maxn-adobe/da-tools/pdp-document-generator/dist/index | https://main--da-tools--maxn-adobe.aem.live/pdp-document-generator/dist/index.html |
 | `da-document-generator` | https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index | https://main--da-tools--maxn-adobe.aem.live/da-document-generator/dist/index.html |
+| `block-signature-migrator` | https://da.live/app/maxn-adobe/da-tools/block-signature-migrator/dist/index | https://main--da-tools--maxn-adobe.aem.live/block-signature-migrator/dist/index.html |
 | `block-finder` (static) | https://da.live/app/maxn-adobe/da-tools/block-finder/index | https://main--da-tools--maxn-adobe.aem.live/block-finder/index.html |
 | `document-counter` (static) | https://da.live/app/maxn-adobe/da-tools/document-counter/index | https://main--da-tools--maxn-adobe.aem.live/document-counter/index.html |
 | `block-index` (static) | https://da.live/app/maxn-adobe/da-tools/block-index/index | https://main--da-tools--maxn-adobe.aem.live/block-index/index.html |
+| `github-package-comparator` (static) | https://da.live/app/maxn-adobe/da-tools/github-package-comparator/index | https://main--da-tools--maxn-adobe.aem.live/github-package-comparator/index.html |
 
 Append `?ref=<branch>` to the da.live URL (or use `<branch>--da-tools--maxn-adobe.aem.live` for the direct URL) to view a non-`main` branch.
 

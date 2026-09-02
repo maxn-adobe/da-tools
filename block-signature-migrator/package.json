@@ -1,5 +1,5 @@
 {
-  "name": "da-bulk-document-updater-tool",
+  "name": "block-signature-migrator",
   "private": true,
   "version": "0.0.0",
   "type": "module",
