@@ -8,6 +8,7 @@ import {
   type GmcSubmitProgress,
 } from '../../lib/gmcSubmit';
 import { getToken } from '../../api/daApi';
+import { GMC_MAPPED_PRODUCT_TYPES } from '../../api/gmcCategoryMap';
 import { writeFieldValue, refetchZazzleInfo } from '../../lib/documentManager';
 import { runBatch, GMC_ASSEMBLE_CONCURRENCY } from '../../lib/concurrency';
 import Modal from '../ui/Modal';
@@ -127,6 +128,17 @@ export default function GmcSubmitDialog({ selectedDocs, onClose, onResults, onDo
     () => [...previews.values()].filter((preview) => Boolean(preview.blockedReason)).length,
     [previews],
   );
+  // Distinct product types in this selection the GMC backend can't map to a google_product_category
+  // (mirrored in GMC_MAPPED_PRODUCT_TYPES). Surfaced as a callout so the author fixes the mapping
+  // before submitting rather than hitting a mid-batch VALIDATION_ERROR. See src/api/gmcCategoryMap.ts.
+  const unmappedTypes = useMemo(() => {
+    const set = new Set<string>();
+    for (const preview of previews.values()) {
+      const t = preview.productType;
+      if (t && t !== UNKNOWN_TYPE && !GMC_MAPPED_PRODUCT_TYPES.has(t)) set.add(t);
+    }
+    return [...set].sort();
+  }, [previews]);
   const errored = useMemo(() => {
     const list: { preview: GmcRowPreview; message?: string }[] = [];
     for (const [path, state] of updates) {
@@ -344,6 +356,14 @@ export default function GmcSubmitDialog({ selectedDocs, onClose, onResults, onDo
           <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs px-3 py-2">
             Only published documents with a product ID can be submitted to GMC — {eligibleCount} of{' '}
             {selectedDocs.length} selected documents qualify.
+          </div>
+        )}
+
+        {unmappedTypes.length > 0 && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-xs px-3 py-2">
+            Unmapped product type{unmappedTypes.length !== 1 ? 's' : ''} (excluded — no Google category yet):{' '}
+            <span className="font-medium">{unmappedTypes.join(', ')}</span>. Add{' '}
+            {unmappedTypes.length !== 1 ? 'them' : 'it'} to the GMC category map before submitting.
           </div>
         )}
 

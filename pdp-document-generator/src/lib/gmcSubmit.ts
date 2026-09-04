@@ -1,6 +1,7 @@
 import { lookupProductFromTemplate, fetchProductPricing } from '../api/zazzleApi';
 import { GMC_LOCALES, DEFAULT_GMC_LOCALE } from '../api/gmcLocales';
 import { daPathToProdUrl } from '../api/daApi';
+import { GMC_MAPPED_PRODUCT_TYPES, unmappedCategoryReason } from '../api/gmcCategoryMap';
 import { runBatch, DEFAULT_CONCURRENCY } from './concurrency';
 import {
   syncProducts,
@@ -72,6 +73,15 @@ export async function assembleGmcPreview(doc: ManagedDoc): Promise<GmcRowPreview
 
   if (!doc.liveUrl) return { ...base, blockedReason: 'Not published — no live URL' };
 
+  // Flag unmapped product types up front (before the Zazzle lookups) so the row is excluded here
+  // with a clear reason instead of being rejected mid-batch by the backend's mandatory
+  // google_product_category resolution. A second check on `resolvedType` below covers docs whose
+  // type comes from the Zazzle fallback rather than authored metadata.
+  const authoredType = doc.identity.productType;
+  if (authoredType && !GMC_MAPPED_PRODUCT_TYPES.has(authoredType)) {
+    return { ...base, blockedReason: unmappedCategoryReason(authoredType) };
+  }
+
   const product = await lookupProductFromTemplate(productId);
   if (!product) return { ...base, blockedReason: 'Zazzle product lookup failed' };
 
@@ -83,6 +93,9 @@ export async function assembleGmcPreview(doc: ManagedDoc): Promise<GmcRowPreview
   if (!image) return { ...base, blockedReason: 'Zazzle image lookup failed' };
 
   const resolvedType = doc.identity.productType || product.productType;
+  if (!GMC_MAPPED_PRODUCT_TYPES.has(resolvedType)) {
+    return { ...base, productType: resolvedType, blockedReason: unmappedCategoryReason(resolvedType) };
+  }
   const row: GmcSyncRow = {
     product_id: productId,
     title: doc.title || product.rootRawTitle,
