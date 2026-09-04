@@ -313,7 +313,9 @@ export async function batchCheckStatus(
 // probes of the live CDN (200 req/s host limit), which reliably determine "published".
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BULK_STATUS_CHUNK = 1000;   // max paths per bulk status job
+const BULK_STATUS_CHUNK = 1000;   // paths per bulk status job (primary pass — fast, few jobs)
+const RECONCILE_CHUNK = 100;      // smaller batch for re-running dropped paths (the job drops fewer when small)
+const RECONCILE_ATTEMPTS = 2;     // re-run the missing diff this many times before the HEAD net
 const JOB_POLL_MS = 1000;         // delay between job-status polls
 const JOB_POLL_MAX = 180;         // give up on a job after ~3 min → fall back
 const HEAD_BATCH_SIZE = 20;       // paths probed in parallel per HEAD batch
@@ -366,7 +368,15 @@ export async function headResolveStatus(
   return result;
 }
 
-/** Bulk status via the AEM admin job API: POST the paths, poll the job, read per-path results. */
+/**
+ * Bulk status via the AEM admin job API. The job silently drops paths whose source-side lookup
+ * transiently fails (counted in progress.failed, absent from resources) — more so in big batches,
+ * and disproportionately for drafts (whose only signal is the source timestamp; a published doc
+ * still surfaces via its preview/live timestamps). So after the fast primary pass we diff
+ * requested-vs-returned and re-run the missing set in small batches (which the job resolves
+ * reliably), then fall back to the authless HEAD probe for any residual — resolving the stragglers
+ * up front instead of surfacing them as Unknown, while keeping the scan fast.
+ */
 export async function bulkResolveStatus(
   paths: string[],
   token: string,
@@ -374,31 +384,63 @@ export async function bulkResolveStatus(
 ): Promise<Map<string, PageStatus>> {
   const { org, repo } = parseDAPath(paths[0]);
   const result = new Map<string, PageStatus>();
-  let done = 0;
-  for (let i = 0; i < paths.length; i += BULK_STATUS_CHUNK) {
-    const chunk = paths.slice(i, i + BULK_STATUS_CHUNK);
-    const contentToDa = new Map<string, string>();
-    const contentPaths = chunk.map((p) => {
-      const cp = parseDAPath(p).contentPath;
-      contentToDa.set(cp, p);
-      return cp;
-    });
-    const statuses = await runBulkStatusChunk(org, repo, contentPaths, token);
-    for (const [cp, st] of statuses) {
-      const da = contentToDa.get(cp);
-      if (da) result.set(da, st);
+  const report = () => onProgress?.(Math.min(result.size, paths.length), paths.length);
+
+  // Run a set of DA paths through the job in `chunkSize` chunks, merging results keyed by DA path.
+  async function runPass(daPaths: string[], chunkSize: number): Promise<void> {
+    for (let i = 0; i < daPaths.length; i += chunkSize) {
+      const chunk = daPaths.slice(i, i + chunkSize);
+      const contentToDa = new Map<string, string>();
+      const contentPaths = chunk.map((p) => {
+        const cp = parseDAPath(p).contentPath;
+        contentToDa.set(cp, p);
+        return cp;
+      });
+      const statuses = await runBulkStatusChunk(org, repo, contentPaths, token);
+      for (const [cp, st] of statuses) {
+        const da = contentToDa.get(cp);
+        if (da) result.set(da, st);
+      }
+      report();
     }
-    done += chunk.length;
-    if (onProgress) onProgress(Math.min(done, paths.length), paths.length);
   }
-  // Any path the job didn't report on exists in source but not on preview/live → Draft.
-  for (const p of paths) if (!result.has(p)) result.set(p, { live: false, preview: false, ok: true });
+
+  // Primary pass — big chunks. May throw → resolveStatuses() falls back to full HEAD.
+  await runPass(paths, BULK_STATUS_CHUNK);
+
+  // Reconcile the paths the job dropped by re-running just those in small batches. Best-effort: a
+  // hiccup here must never discard the good primary results.
+  for (let attempt = 0; attempt < RECONCILE_ATTEMPTS; attempt++) {
+    const missing = paths.filter((p) => !result.has(p));
+    if (missing.length === 0) break;
+    try {
+      await runPass(missing, RECONCILE_CHUNK);
+    } catch {
+      break;
+    }
+  }
+
+  // Final net: resolve any still-missing path via the authless CDN HEAD probe (reliable for
+  // "published"), so a dropped-but-published doc is caught rather than mislabeled.
+  const stillMissing = paths.filter((p) => !result.has(p));
+  if (stillMissing.length > 0) {
+    try {
+      const headStatuses = await headResolveStatus(stillMissing);
+      for (const [p, st] of headStatuses) result.set(p, st);
+      report();
+    } catch { /* fall through to Unknown */ }
+  }
+
+  // Anything the HEAD net couldn't reach either → genuinely Unknown (recheckable).
+  for (const p of paths) if (!result.has(p)) result.set(p, { live: false, preview: false, ok: false });
   return result;
 }
 
 type BulkResource = {
   path?: string; webPath?: string; resourcePath?: string;
-  live?: { status?: number }; preview?: { status?: number };
+  // A bulk STATUS job reports lifecycle state as timestamps, present iff the doc exists in that
+  // tier — NOT as `{ status: 200 }` objects (those belong to the single-path status endpoint).
+  sourceLastModified?: string; previewLastModified?: string; publishLastModified?: string;
 };
 
 async function runBulkStatusChunk(
@@ -411,7 +453,7 @@ async function runBulkStatusChunk(
   const startResp = await fetch(`${HLX_ADMIN}/status/${org}/${repo}/${BRANCH}/*`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paths: contentPaths, select: ['preview', 'live'] }),
+    body: JSON.stringify({ paths: contentPaths, select: ['edit', 'preview', 'live'], forceAsync: true }),
   });
   if (!startResp.ok) throw new Error(`bulk status start: ${startResp.status}`);
   const startData = await startResp.json() as { job?: { name?: string }; links?: { self?: string } };
@@ -430,21 +472,36 @@ async function runBulkStatusChunk(
   }
   if (!stopped) throw new Error('bulk status: job did not finish in time');
 
-  // 3. Read per-path results.
-  // NOTE: the exact /details response shape must be confirmed against a live run (see the plan's
-  // feasibility-lock step). We parse the documented `resources` array and THROW on anything else
-  // (incl. a path-key format that doesn't match what we requested) so resolveStatuses() falls back
-  // to the reliable HEAD probe instead of silently reporting everything as Draft.
+  // 3. Read per-path results. A bulk STATUS job's /details reports lifecycle state as timestamps
+  // under data.resources[] — `publishLastModified` (⇒ live/published) and `previewLastModified`
+  // (⇒ previewed), NOT `{ status: 200 }` (that shape is the single-path /status endpoint's, and
+  // assuming it here is what silently marked every doc Draft). Confirmed against the AEM OpenAPI
+  // `bulkStatus`/`getJobDetails` spec + the helix-mcp bulk-status parser. Two guards force a
+  // fallback to the reliable HEAD probe rather than silently reporting Draft: a path-key mismatch
+  // (keys don't match what we requested) and a field mismatch (no resource carries any known
+  // lifecycle timestamp — i.e. the shape changed again).
   const dResp = await fetch(`${jobUrl}/details`, { headers: { Authorization: `Bearer ${token}` } });
   if (!dResp.ok) throw new Error(`bulk status details: ${dResp.status}`);
   const details = await dResp.json() as { data?: { resources?: unknown }; resources?: unknown };
   const resources = details.data?.resources ?? details.resources;
   if (!Array.isArray(resources)) throw new Error('bulk status: unrecognized details shape');
   const out = new Map<string, PageStatus>();
+  let recognizedShape = false;
   for (const item of resources as BulkResource[]) {
     const path = item.path ?? item.webPath ?? item.resourcePath;
     if (!path) continue;
-    out.set(path, { live: item.live?.status === 200, preview: item.preview?.status === 200, ok: true });
+    if (item.sourceLastModified || item.previewLastModified || item.publishLastModified) {
+      recognizedShape = true;
+    }
+    out.set(path, {
+      live: Boolean(item.publishLastModified),
+      preview: Boolean(item.previewLastModified),
+      ok: true,
+    });
+  }
+  if (resources.length > 0 && !recognizedShape) {
+    console.warn('bulk status: unrecognized resource shape, falling back to HEAD probe', resources[0]);
+    throw new Error('bulk status: unrecognized resource shape');
   }
   const matched = contentPaths.filter((cp) => out.has(cp)).length;
   if (matched < contentPaths.length * 0.5) {

@@ -139,14 +139,13 @@ export default function DocumentManagerTab() {
     return () => { stale = true; };
   }, [rootPath, scanNonce]);
 
-  // Retry status for only the rows that came back Unknown — no re-crawl, no re-fetch of source.
-  async function handleRecheckUnknowns() {
-    if (scanning) return;
-    const unknownPaths = docs.filter((d) => d.statusUnknown).map((d) => d.path);
-    if (unknownPaths.length === 0) return;
-    setScanProgress({ phase: 'checking', done: 0, total: unknownPaths.length });
+  // Re-resolve publish/preview status for a set of already-listed rows — no re-crawl, no source
+  // re-fetch. Shared by "Recheck status" (unknowns only) and "Refresh status" (all rows).
+  async function runStatusCheck(paths: string[]) {
+    if (scanning || paths.length === 0) return;
+    setScanProgress({ phase: 'checking', done: 0, total: paths.length });
     try {
-      await recheckStatuses(unknownPaths, {
+      await recheckStatuses(paths, {
         onStatuses: (updates) => {
           const byPath = new Map(updates.map((u) => [u.path, u]));
           setDocs((prev) => prev.map((d) => {
@@ -160,6 +159,16 @@ export default function DocumentManagerTab() {
     } finally {
       setScanProgress(null);
     }
+  }
+
+  // Retry only the rows that came back Unknown (amber banner action).
+  function handleRecheckUnknowns() {
+    void runStatusCheck(docs.filter((d) => d.statusUnknown).map((d) => d.path));
+  }
+
+  // Re-resolve status for every loaded row (toolbar "Refresh status").
+  function handleRefreshStatus() {
+    void runStatusCheck(docs.map((d) => d.path));
   }
 
   const subDirectories = useMemo(
@@ -390,6 +399,15 @@ export default function DocumentManagerTab() {
         >
           {scanning ? 'Scanning…' : rootPath === rootPathInput.trim() && hasScanned ? 'Rescan' : 'Scan'}
         </button>
+        {hasScanned && !scanning && docs.length > 0 && (
+          <button
+            type="button"
+            onClick={handleRefreshStatus}
+            className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-xl border border-gray-300 hover:bg-gray-50 cursor-pointer transition-colors"
+          >
+            Refresh status
+          </button>
+        )}
         {hasScanned && !scanning && (
           <span className="text-sm text-gray-500">{docs.length} document{docs.length !== 1 ? 's' : ''} found</span>
         )}
@@ -418,7 +436,7 @@ export default function DocumentManagerTab() {
         return (
           <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
             <p className="flex-1">
-              Publish status couldn&apos;t be determined for {unknownCount} document{unknownCount !== 1 ? 's' : ''} (the status service was unreachable). Those rows show <strong>Unknown</strong>.
+              Publish status couldn&apos;t be determined for {unknownCount} document{unknownCount !== 1 ? 's' : ''}; those rows show <strong>Unknown</strong> until rechecked.
             </p>
             <button
               type="button"
