@@ -31,11 +31,23 @@ export interface DaListItem {
 export async function listDirectory(dirPath: string): Promise<DaListItem[]> {
   const t = getToken();
   if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
-  const resp = await fetch(`${DA_API}/list${dirPath}`, {
-    headers: { Authorization: `Bearer ${t}` },
-  });
-  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
-  return resp.json() as Promise<DaListItem[]>;
+  // The DA /list API is S3/R2-backed and lists ~1000 entries per folder at a time, returning a
+  // `da-continuation-token` response header when the folder listing is truncated. Follow it until
+  // the whole folder is read — otherwise a folder with >1000 direct children is silently cut to
+  // its first page, pinning the scan at a fixed count no matter how many documents are added.
+  const items: DaListItem[] = [];
+  let continuationToken: string | null = null;
+  for (let guard = 0; guard < 1_000_000; guard++) {
+    const headers: Record<string, string> = { Authorization: `Bearer ${t}` };
+    if (continuationToken) headers['da-continuation-token'] = continuationToken;
+    const resp = await fetch(`${DA_API}/list${dirPath}`, { headers });
+    if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+    const pageItems = await resp.json() as DaListItem[];
+    items.push(...pageItems);
+    continuationToken = resp.headers.get('da-continuation-token');
+    if (!continuationToken) break;
+  }
+  return items;
 }
 
 export interface DirectoryCheckResult {

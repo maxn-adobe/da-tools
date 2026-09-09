@@ -47,11 +47,25 @@ export function safeFetch(url, options = {}) {
 }
 
 export async function ls(path, token) {
-  const resp = await safeFetch(`${DA_ADMIN}/list${path}`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-  if (!resp.ok) throw new Error(`ls ${path}: ${resp.status}`);
-  return resp.json();
+  // The DA /list API is S3/R2-backed and lists ~1000 entries per folder at a time, returning a
+  // `da-continuation-token` response header when the folder listing is truncated. Follow it until
+  // the whole folder is read — otherwise a folder with >1000 direct children is silently cut to
+  // its first page, pinning any crawl at a fixed count no matter how many documents are added.
+  const items = [];
+  let continuationToken = null;
+  for (let guard = 0; guard < 1_000_000; guard += 1) {
+    const headers = { Authorization: `Bearer ${token}` };
+    if (continuationToken) headers['da-continuation-token'] = continuationToken;
+    // eslint-disable-next-line no-await-in-loop
+    const resp = await safeFetch(`${DA_ADMIN}/list${path}`, { headers });
+    if (!resp.ok) throw new Error(`ls ${path}: ${resp.status}`);
+    // eslint-disable-next-line no-await-in-loop
+    const pageItems = await resp.json();
+    for (const item of pageItems) items.push(item);
+    continuationToken = resp.headers.get('da-continuation-token');
+    if (!continuationToken) break;
+  }
+  return items;
 }
 
 export async function cat(path, token) {
