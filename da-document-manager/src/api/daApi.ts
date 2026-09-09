@@ -21,6 +21,17 @@ export function daPathToLiveUrl(daPath: string): string {
   return `https://${BRANCH}--${repo}--${org}.aem.live${contentPath}`;
 }
 
+export function daPathToProdUrl(daPath: string): string {
+  const { org, repo, contentPath } = parseDAPath(daPath);
+  // Production host binding is EDS-site-specific. The one known mapping is Express
+  // (adobecom/da-express-milo → www.adobe.com); any other org/repo has no known prod origin, so
+  // fall back to the live CDN URL.
+  if (org === 'adobecom' && repo === 'da-express-milo') {
+    return `https://www.adobe.com${contentPath}`;
+  }
+  return daPathToLiveUrl(daPath);
+}
+
 export interface DaListItem {
   path: string;
   ext?: string;

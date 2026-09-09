@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { scanDocs, recheckStatuses, loadBatchMetadata, type ScanPhase } from '../lib/documentManager';
-import { checkDirectoryExists } from '../api/daApi';
+import { checkDirectoryExists, daPathToLiveUrl, daPathToPreviewUrl, daPathToProdUrl } from '../api/daApi';
 import type { CrawlError } from '../api/crawl';
 import { useDaDocumentActions } from '../hooks/useDaDocumentActions';
 import ConfirmModal from './ConfirmModal';
@@ -12,6 +12,7 @@ const ALL = 'all';
 const NO_BATCH = '(no batch)';
 type StatusKey = 'draft' | 'previewed' | 'published' | 'unknown';
 type BulkConfirmOp = 'preview' | 'publish' | 'unpublish' | 'delete';
+type UrlExportKind = 'document' | 'preview' | 'live' | 'prod';
 
 /** Collapse a row's stage + statusUnknown flag to the four author-facing status buckets. */
 function statusOf(d: DocRow): StatusKey {
@@ -70,6 +71,8 @@ export default function DocumentManagerView() {
   const [hasScanned, setHasScanned] = useState(false);
   const [pathError, setPathError] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   const [scanProgress, setScanProgress] = useState<{ phase: ScanPhase; done: number; total: number } | null>(null);
   const scanning = scanProgress !== null;
 
@@ -254,6 +257,53 @@ export default function DocumentManagerView() {
     return copy;
   }, [filtered, sortField, sortDirection]);
 
+  // Close the Export menu on any outside click.
+  useEffect(() => {
+    if (!showExportMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
+        setShowExportMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showExportMenu]);
+
+  // URLs are derived from each visible (sorted) doc's path + resolved stage.
+  function collectUrls(kind: UrlExportKind): string[] {
+    switch (kind) {
+      case 'document':
+        return sorted.map((d) => `https://da.live/edit#${d.path}`);
+      case 'preview':
+        return sorted
+          .filter((d) => d.previewUrl || d.stage === 'previewed' || d.stage === 'published')
+          .map((d) => daPathToPreviewUrl(d.path));
+      case 'live':
+        return sorted
+          .filter((d) => d.liveUrl || d.stage === 'published')
+          .map((d) => daPathToLiveUrl(d.path));
+      case 'prod':
+        return sorted
+          .filter((d) => d.liveUrl || d.stage === 'published')
+          .map((d) => daPathToProdUrl(d.path));
+    }
+  }
+
+  function handleExportUrls(kind: UrlExportKind) {
+    setShowExportMenu(false);
+    const urls = collectUrls(kind);
+    if (urls.length === 0) return; // options with 0 are disabled; this is a guard
+    const label = { document: 'document', preview: 'preview', live: 'published-aem', prod: 'published-adobe' }[kind];
+    const date = new Date().toISOString().slice(0, 10);
+    const blob = new Blob([`${urls.join('\n')}\n`], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${label}-urls-${date}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function handleSort(field: SortField) {
     if (field === sortField) {
       setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
@@ -422,6 +472,48 @@ export default function DocumentManagerView() {
             {anyFilterActive && (
               <span className="text-gray-500">{filtered.length} shown</span>
             )}
+
+            <div ref={exportMenuRef} className="relative ml-auto">
+              <button
+                type="button"
+                onClick={() => setShowExportMenu((p) => !p)}
+                className="text-sm font-medium px-3 py-1.5 rounded-lg border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 cursor-pointer transition-colors flex items-center gap-1.5"
+              >
+                Export URLs
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4 text-gray-400">
+                  <path fillRule="evenodd" d="M5.22 8.22a.75.75 0 0 1 1.06 0L10 11.94l3.72-3.72a.75.75 0 1 1 1.06 1.06l-4.25 4.25a.75.75 0 0 1-1.06 0L5.22 9.28a.75.75 0 0 1 0-1.06Z" clipRule="evenodd" />
+                </svg>
+              </button>
+              {showExportMenu && (() => {
+                const opts: { kind: UrlExportKind; label: string }[] = [
+                  { kind: 'document', label: 'Document links' },
+                  { kind: 'preview', label: 'Preview links (.aem.page)' },
+                  { kind: 'live', label: 'Published (.aem.live)' },
+                  { kind: 'prod', label: 'Published (adobe.com)' },
+                ];
+                return (
+                  <div className="absolute right-0 mt-1 w-60 bg-white border border-gray-200 rounded-lg shadow-lg z-20 overflow-hidden">
+                    {opts.map(({ kind, label }, i) => {
+                      const count = collectUrls(kind).length;
+                      return (
+                        <Fragment key={kind}>
+                          {i > 0 && <div className="border-t border-gray-100" />}
+                          <button
+                            type="button"
+                            disabled={count === 0}
+                            onClick={() => handleExportUrls(kind)}
+                            className="w-full text-left px-4 py-2.5 text-sm flex items-center justify-between text-gray-700 hover:bg-gray-50 cursor-pointer disabled:text-gray-300 disabled:hover:bg-white disabled:cursor-not-allowed"
+                          >
+                            <span>{label}</span>
+                            <span className="text-gray-400">{count}</span>
+                          </button>
+                        </Fragment>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
           </div>
 
           {selected.size > 0 && (

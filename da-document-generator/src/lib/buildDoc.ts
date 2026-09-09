@@ -50,7 +50,7 @@ export function resolveOutputPath(row: CsvRow, cfg: OutputConfig): string {
  * `sheet-powered` forced OFF — so EDS still emits the correct <head> metadata, but
  * content-replace.js does not run (the body is already filled).
  */
-export function buildBakedDoc(templateHtml: string, row: CsvRow): string {
+export function buildBakedDoc(templateHtml: string, row: CsvRow, opts: { generatedBatch: string }): string {
   const substituted = applyTemplate(templateHtml, row);
   const doc = new DOMParser().parseFromString(substituted, 'text/html');
   resolveHashLinksOnDoc(doc, row);
@@ -61,6 +61,11 @@ export function buildBakedDoc(templateHtml: string, row: CsvRow): string {
     entries[key] = value;
   }
   entries['sheet-powered'] = 'N';
+  // Stamp the generation batch (one shared ISO timestamp per Generate run — a batch identity) plus a
+  // per-doc last-updated, matching pdp-document-generator's convention so a Document Manager Batch
+  // filter can group these docs. `generated-batch` must never be re-bumped by a later edit.
+  entries['generated-batch'] = opts.generatedBatch;
+  entries['last-updated'] = new Date().toISOString();
   upsertMetadataBlockOnDoc(doc, entries);
 
   return serializeDoc(doc);

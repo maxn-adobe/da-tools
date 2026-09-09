@@ -460,6 +460,10 @@ export default function DocumentManagerTab() {
               Issues only
             </label>
 
+            {(subDirFilter !== ALL || batchFilter !== ALL || statusFilter !== ALL || issuesOnly) && (
+              <span className="text-gray-500">{filtered.length} shown</span>
+            )}
+
             <div ref={exportMenuRef} className="relative ml-auto">
               <button
                 type="button"
@@ -479,7 +483,7 @@ export default function DocumentManagerTab() {
                   { kind: 'prod', label: 'Published (adobe.com)' },
                 ];
                 return (
-                  <div className="absolute right-0 mt-1 w-60 bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden">
+                  <div className="absolute right-0 mt-1 w-60 bg-white border border-gray-200 rounded-lg shadow-lg z-20 overflow-hidden">
                     {opts.map(({ kind, label }, i) => {
                       const count = collectUrls(kind).length;
                       return (

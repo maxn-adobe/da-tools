@@ -87,6 +87,10 @@ export default function App() {
       work.push({ id: row._id, row, path });
     }
 
+    // One shared batch id for every doc in this Generate run — the Document Manager's Batch filter
+    // groups on this (pdp convention).
+    const generatedBatch = new Date().toISOString();
+
     setResults(work.map((w): RowResult => ({ id: w.id, path: w.path, stage: 'pending' })));
     setGenerating(true);
     const patch = (id: string, changes: Partial<RowResult>) =>
@@ -95,7 +99,7 @@ export default function App() {
     await runBatch(work, async (w) => {
       patch(w.id, { stage: 'generating' });
       try {
-        const html = buildBakedDoc(tmplHtml, w.row);
+        const html = buildBakedDoc(tmplHtml, w.row, { generatedBatch });
         const qa = runBakeQa(html);
         if (await docExists(w.path)) {
           try { await createDocVersion(w.path, 'Pre-generation backup'); } catch { /* proceed */ }
