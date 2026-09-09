@@ -24,10 +24,16 @@ export interface RowResult {
   liveUrl?: string;
 }
 
-/** A document row in the manager table: a RowResult plus the two spine metadata columns. */
+/** A document row in the manager table: a RowResult plus spine metadata + optional batch. */
 export interface DocRow extends RowResult {
+  /** Folder containing this doc, relative to the scanned root (e.g. `/hoodie/red`, or `/` at root).
+   *  Path-derived at discovery — cheap spine metadata, drives the sub-directory drill-down. */
+  subDirectory: string;
   /** Last-modified from the `/list` discovery, backfilled from the status job when absent. */
   lastUpdated?: string | number;
   /** True when the status check failed (rate-limited/unreachable) — render "Unknown", not "Draft". */
   statusUnknown?: boolean;
+  /** `generated-batch` metadata (pdp-stamped ISO per bulk run). Populated only by the opt-in
+   *  batch-load pass (a per-doc source fetch); `undefined` = not loaded / no batch. */
+  generatedBatch?: string;
 }

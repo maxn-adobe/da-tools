@@ -1,13 +1,15 @@
-import { useEffect, useMemo, useState } from 'react';
-import { scanDocs, recheckStatuses, type ScanPhase } from '../lib/documentManager';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { scanDocs, recheckStatuses, loadBatchMetadata, type ScanPhase } from '../lib/documentManager';
 import { checkDirectoryExists } from '../api/daApi';
 import type { CrawlError } from '../api/crawl';
 import { useDaDocumentActions } from '../hooks/useDaDocumentActions';
 import ConfirmModal from './ConfirmModal';
+import DrillDownNav from './DrillDownNav';
 import DocumentManagerTable, { type SortField } from './DocumentManagerTable';
 import type { DocRow } from '../types';
 
 const ALL = 'all';
+const NO_BATCH = '(no batch)';
 type StatusKey = 'draft' | 'previewed' | 'published' | 'unknown';
 type BulkConfirmOp = 'preview' | 'publish' | 'unpublish' | 'delete';
 
@@ -17,6 +19,11 @@ function statusOf(d: DocRow): StatusKey {
   if (d.stage === 'published') return 'published';
   if (d.stage === 'previewed') return 'previewed';
   return 'draft';
+}
+
+/** A row's subDirectory (`/hoodie/red`, or `/` at root) as folder segments (root = []). */
+function toSegs(subDirectory: string): string[] {
+  return subDirectory === '/' ? [] : subDirectory.slice(1).split('/');
 }
 
 function ScanProgressBar({ progress }: { progress: { phase: ScanPhase; done: number; total: number } }) {
@@ -50,6 +57,11 @@ export default function DocumentManagerView() {
   const [crawlErrors, setCrawlErrors] = useState<CrawlError[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
+  const [drillPath, setDrillPath] = useState<string[]>([]);
+  const [batchFilter, setBatchFilter] = useState<string>(ALL);
+  const [batchDataState, setBatchDataState] = useState<'none' | 'loading' | 'loaded'>('none');
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
+  const batchLoadId = useRef(0); // monotonic cancel token for the in-flight batch load
   const [sortField, setSortField] = useState<SortField>('path');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [confirmOp, setConfirmOp] = useState<BulkConfirmOp | null>(null);
@@ -88,6 +100,13 @@ export default function DocumentManagerView() {
   // (flipped in cleanup) makes a superseded or unmounted scan's callbacks no-ops.
   useEffect(() => {
     if (rootPath === null) return;
+    // A new scan invalidates any in-flight batch-metadata load and resets the drill nav + filters
+    // (the tree changed, so a stale prefix/batch could point at folders/values that no longer exist).
+    batchLoadId.current += 1;
+    setBatchDataState('none');
+    setBatchFilter(ALL);
+    setBatchProgress(null);
+    setDrillPath([]);
     let stale = false;
     void scanDocs(rootPath, {
       onDiscovered: (placeholders) => {
@@ -158,10 +177,65 @@ export default function DocumentManagerView() {
     void runStatusCheck(docs.map((d) => d.path));
   }
 
+  // Opt-in per-doc metadata pass — populates `generatedBatch` and enables the Batch filter. A
+  // monotonic id makes a superseded (rescanned) load's callbacks no-ops.
+  async function handleLoadBatchData() {
+    if (batchDataState === 'loading' || docs.length === 0) return;
+    const myId = (batchLoadId.current += 1);
+    setBatchDataState('loading');
+    setBatchProgress({ done: 0, total: docs.length });
+    await loadBatchMetadata(docs.map((d) => d.path), {
+      onBatches: (updates) => {
+        if (batchLoadId.current !== myId) return;
+        const byPath = new Map(updates.map((u) => [u.path, u]));
+        setDocs((prev) => prev.map((d) => {
+          const u = byPath.get(d.path);
+          return u ? { ...d, generatedBatch: u.generatedBatch } : d;
+        }));
+      },
+      onProgress: (done, total) => {
+        if (batchLoadId.current === myId) setBatchProgress({ done, total });
+      },
+      cancelled: () => batchLoadId.current !== myId,
+    });
+    if (batchLoadId.current !== myId) return;
+    setBatchDataState('loaded');
+    setBatchProgress(null);
+  }
+
+  // Immediate child folders of the current drill level, with counts — derived from ALL docs (not
+  // `filtered`) so status/batch filters never distort the folder tree.
+  const drillChildren = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const d of docs) {
+      const segs = toSegs(d.subDirectory);
+      if (segs.length <= drillPath.length) continue; // sits in current level or above
+      if (drillPath.some((s, i) => segs[i] !== s)) continue; // not under current prefix
+      const child = segs[drillPath.length];
+      counts.set(child, (counts.get(child) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [docs, drillPath]);
+
+  // Distinct batch values (newest ISO first), with a "(no batch)" bucket last.
+  const batches = useMemo(
+    () => [...new Set(docs.map((d) => d.generatedBatch || NO_BATCH))]
+      .sort((a, b) => (a === NO_BATCH ? 1 : b === NO_BATCH ? -1 : b.localeCompare(a))),
+    [docs],
+  );
+
   const filtered = useMemo(() => {
-    if (statusFilter === ALL) return docs;
-    return docs.filter((d) => statusOf(d) === statusFilter);
-  }, [docs, statusFilter]);
+    const prefix = drillPath.length ? `/${drillPath.join('/')}` : null;
+    return docs.filter((d) => {
+      // Drill filter is prefix-inclusive: the folder itself and everything nested under it.
+      if (prefix && !(d.subDirectory === prefix || d.subDirectory.startsWith(`${prefix}/`))) return false;
+      if (statusFilter !== ALL && statusOf(d) !== statusFilter) return false;
+      if (batchFilter !== ALL && (d.generatedBatch || NO_BATCH) !== batchFilter) return false;
+      return true;
+    });
+  }, [docs, drillPath, statusFilter, batchFilter]);
 
   const sorted = useMemo(() => {
     const value = (d: DocRow): string => {
@@ -215,6 +289,7 @@ export default function DocumentManagerView() {
   }
 
   const unknownCount = hasScanned && !scanning ? docs.filter((d) => d.statusUnknown).length : 0;
+  const anyFilterActive = statusFilter !== ALL || batchFilter !== ALL || drillPath.length > 0;
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 flex flex-col gap-4">
@@ -289,6 +364,15 @@ export default function DocumentManagerView() {
 
       {(docs.length > 0 || hasScanned) && (
         <>
+          {(drillPath.length > 0 || drillChildren.length > 0) && (
+            <DrillDownNav
+              segments={drillPath}
+              childFolders={drillChildren}
+              onNavigate={(depth) => setDrillPath(drillPath.slice(0, depth))}
+              onDrill={(name) => setDrillPath([...drillPath, name])}
+            />
+          )}
+
           <div className="flex items-center gap-3 flex-wrap text-sm">
             <label className="flex items-center gap-1.5 text-gray-600">
               Status
@@ -304,7 +388,38 @@ export default function DocumentManagerView() {
                 <option value="unknown">Unknown</option>
               </select>
             </label>
-            {statusFilter !== ALL && (
+
+            {batchDataState === 'none' && docs.length > 0 && (
+              <button
+                type="button"
+                onClick={() => void handleLoadBatchData()}
+                className="px-3 py-1.5 bg-white text-gray-700 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 cursor-pointer transition-colors"
+              >
+                Load batch data
+              </button>
+            )}
+            {batchDataState === 'loading' && batchProgress && (
+              <span className="text-gray-500 tabular-nums">
+                Loading batch data… {batchProgress.done} / {batchProgress.total}
+              </span>
+            )}
+            {batchDataState === 'loaded' && (
+              <label className="flex items-center gap-1.5 text-gray-600">
+                Batch
+                <select
+                  value={batchFilter}
+                  onChange={(e) => setBatchFilter(e.target.value)}
+                  className="h-8 px-2 border border-gray-300 rounded-lg text-sm"
+                >
+                  <option value={ALL}>All</option>
+                  {batches.map((b) => (
+                    <option key={b} value={b}>{b === NO_BATCH ? b : new Date(b).toLocaleDateString()}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
+            {anyFilterActive && (
               <span className="text-gray-500">{filtered.length} shown</span>
             )}
           </div>

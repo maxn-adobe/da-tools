@@ -1,7 +1,8 @@
 import { crawlDirectory, type CrawlError } from '../api/crawl';
 import { getToken } from '../da';
-import { daPathToLiveUrl, daPathToPreviewUrl, resolveStatuses, type DaListItem, type PageStatus } from '../api/daApi';
-import { CRAWL_CONCURRENCY } from './concurrency';
+import { cat, daPathToLiveUrl, daPathToPreviewUrl, resolveStatuses, type DaListItem, type PageStatus } from '../api/daApi';
+import { CRAWL_CONCURRENCY, runBatch } from './concurrency';
+import { readMetadataBlockFromDoc } from './metadata';
 import type { DocRow } from '../types';
 
 export type ScanPhase = 'discovering' | 'checking';
@@ -27,8 +28,22 @@ export interface ScanCallbacks {
 
 const FLUSH_SIZE = 25;
 
-function placeholderRow(item: DaListItem): DocRow {
-  return { id: item.path, path: item.path, stage: 'draft', lastUpdated: item.lastModified };
+/** Immediate folder containing `path`, relative to `rootPath` (e.g. `/hoodie/red`, or `/` at root). */
+function computeSubDirectory(path: string, rootPath: string): string {
+  const root = rootPath.endsWith('/') ? rootPath.slice(0, -1) : rootPath;
+  const rel = path.startsWith(root) ? path.slice(root.length) : path;
+  const lastSlash = rel.lastIndexOf('/');
+  return lastSlash > 0 ? rel.slice(0, lastSlash) : '/';
+}
+
+function placeholderRow(item: DaListItem, rootPath: string): DocRow {
+  return {
+    id: item.path,
+    path: item.path,
+    stage: 'draft',
+    subDirectory: computeSubDirectory(item.path, rootPath),
+    lastUpdated: item.lastModified,
+  };
 }
 
 /** Map a resolved PageStatus onto a row update (published / previewed / draft / unknown). */
@@ -74,7 +89,7 @@ export async function scanDocs(
   if (cb.cancelled()) return { errors: crawl.errors };
   const paths = crawl.docs.map((d) => d.path);
   const total = paths.length;
-  cb.onDiscovered(crawl.docs.map(placeholderRow), total);
+  cb.onDiscovered(crawl.docs.map((d) => placeholderRow(d, rootPath)), total);
 
   // Phase 2 — status. Resolve publish/preview state for the whole set.
   const token = getToken();
@@ -110,4 +125,47 @@ export async function recheckStatuses(
   if (cb.cancelled()) return;
   emitStatuses(paths, statuses, cb.onStatuses);
   cb.onProgress('checking', total, total);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Opt-in batch metadata. Reads `generated-batch` from each doc's EDS Metadata block, which needs a
+// per-doc /source fetch + DOM parse (the "phase 2" the fast scan deliberately skips). Run on demand
+// only (the "Load batch data" action) so the default scan stays fast.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface BatchUpdate {
+  path: string;
+  generatedBatch?: string;
+}
+
+export interface BatchLoadCallbacks {
+  onBatches: (updates: BatchUpdate[]) => void;
+  onProgress: (done: number, total: number) => void;
+  /** Return true to abort — checked before each doc fetch so a rescan/unmount stops work. */
+  cancelled: () => boolean;
+}
+
+export async function loadBatchMetadata(paths: string[], cb: BatchLoadCallbacks): Promise<void> {
+  if (paths.length === 0) return;
+  const total = paths.length;
+  let done = 0;
+  let buf: BatchUpdate[] = [];
+  cb.onProgress(0, total);
+  await runBatch(paths, async (path) => {
+    if (cb.cancelled()) return;
+    let generatedBatch: string | undefined;
+    try {
+      const doc = new DOMParser().parseFromString(await cat(path), 'text/html');
+      generatedBatch = readMetadataBlockFromDoc(doc)['generated-batch'] || undefined;
+    } catch {
+      // Unreadable/deleted doc → leave undefined (the "(no batch)" bucket).
+    }
+    buf.push({ path, generatedBatch });
+    done += 1;
+    if (buf.length >= FLUSH_SIZE || done === total) {
+      cb.onBatches(buf);
+      cb.onProgress(done, total);
+      buf = [];
+    }
+  }, CRAWL_CONCURRENCY);
 }

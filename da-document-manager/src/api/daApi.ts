@@ -74,6 +74,18 @@ export async function checkDirectoryExists(dirPath: string): Promise<DirectoryCh
   }
 }
 
+export async function cat(filePath: string): Promise<string> {
+  const t = getToken();
+  if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
+  const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
+  const resp = await fetch(`${DA_API}/source${path}`, {
+    cache: 'no-store',
+    headers: { Authorization: `Bearer ${t}` },
+  });
+  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+  return resp.text();
+}
+
 export async function triggerPreview(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
   const resp = await fetch(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {
