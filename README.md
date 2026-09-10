@@ -12,7 +12,7 @@ Open the **[DA Tools home](https://da.live/app/maxn-adobe/da-tools/index)** page
 | **DA Document Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`da-document-generator/`](./da-document-generator/) | https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index |
 | **Block Finder** — find every `/express` page that uses a given block | [`block-finder/`](./block-finder/) | https://da.live/app/maxn-adobe/da-tools/block-finder/index |
 | **Document Counter** — count HTML documents under any directory path | [`document-counter/`](./document-counter/) | https://da.live/app/maxn-adobe/da-tools/document-counter/index |
-| **Block Index** — build a full index of every block in the `/express` tree | [`block-index/`](./block-index/) | https://da.live/app/maxn-adobe/da-tools/block-index/index |
+| **Block Index** — pick a repo (da-express-milo or da-dc) and build a full index of every block in use | [`block-index/`](./block-index/) | https://da.live/app/maxn-adobe/da-tools/block-index/index |
 | **Block Signature Migrator** — inspect block structure, infer block schemas, audit signature drift | [`block-signature-migrator/`](./block-signature-migrator/) | https://da.live/app/maxn-adobe/da-tools/block-signature-migrator/dist/index |
 | **GitHub Package Comparator** — compare a JSON file (e.g. `package.json`) across GitHub repos | [`github-package-comparator/`](./github-package-comparator/) | https://da.live/app/maxn-adobe/da-tools/github-package-comparator/index |
 

@@ -6,7 +6,10 @@
     <link rel="icon" href="data:,">
     <style>
       :root {
-      --express-result-border-color: rgba(191, 146, 13, 0.25);
+      /* --own-* are overridden per selected repo from index.js */
+      --own-color: #fec311;
+      --own-bg: rgba(254, 195, 17, 0.1);
+      --own-border: rgba(191, 146, 13, 0.25);
       --milo-result-border-color: rgba(191, 56, 175, 0.2);
       }
       body { font-family: sans-serif; margin: 1rem 2rem; }
@@ -21,6 +24,10 @@
       }
       .back::before { content: '‹'; font-size: 1.5em; line-height: 1; margin-top: -0.06em; }
       .back:hover { color: #000; }
+      .repo-bar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.85rem; }
+      .repo-bar label { font-size: 0.85rem; color: #888; }
+      #repo-select { font-size: 0.9rem; padding: 0.3rem 0.5rem; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333; cursor: pointer; }
+      #repo-select:disabled { opacity: 0.6; cursor: default; }
       .toolbar { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
       .meta { color: #888; font-size: 0.9rem; }
       #status { color: #555; min-height: 1.2em; margin-bottom: 0.5rem; }
@@ -65,7 +72,7 @@
       #legend-row { display: flex; justify-content: space-between; align-items: center; margin: 0.4rem 0 0.6rem; }
       #legend { display: flex; gap: 2rem; }
       .legend-express-square { font-size: 2rem; line-height: 0; }
-      .legend-express { display: flex; align-items: center; color: #fec311; }
+      .legend-own { display: flex; align-items: center; color: var(--own-color); }
       .legend-milo { display: flex; align-items: center; color: #fe4be9; }
       .legend-unknown { display: flex; align-items: center; color: #999; }
       #sort-select { font-size: 0.85rem; padding: 0.2rem 0.4rem; border: 1px solid #ddd; border-radius: 4px; background: #fff; color: #555; cursor: pointer; }
@@ -81,7 +88,7 @@
         will-change: transform;
       }
       #results details[open] { background: #fff; }
-      #results details.repo-express { background: rgba(254, 195, 17, 0.1); border-color: var(--express-result-border-color); }
+      #results details.repo-own { background: var(--own-bg); border-color: var(--own-border); }
       #results details.repo-milo { background: rgba(254, 75, 233, 0.08); border-color: var(--milo-result-border-color) }
       #results summary {
         cursor: pointer;
@@ -92,8 +99,8 @@
         gap: 0.5rem;
         padding: 0.6rem 1rem;
       }
-      #results details.repo-express[open] summary {
-        border-bottom: 1px solid var(--express-result-border-color)
+      #results details.repo-own[open] summary {
+        border-bottom: 1px solid var(--own-border)
       }
       #results details.repo-milo[open] summary {
         border-bottom: 1px solid var(--milo-result-border-color)
@@ -124,7 +131,7 @@
         padding: 0;
         list-style: none;
       }
-      .block-paths li { display: flex; align-items: center; padding: 12px 1rem; color: #555; border-bottom: 1px solid var(--express-result-border-color); }
+      .block-paths li { display: flex; align-items: center; padding: 12px 1rem; color: #555; border-bottom: 1px solid var(--own-border); }
       
       .block-paths li:last-child { border-bottom: none; }
       .path-link { color: inherit; text-decoration: none; }
@@ -139,6 +146,13 @@
   <body>
     <a href="../index.html" class="back" data-app-path="index">All Tools</a>
     <h2>Block Index</h2>
+    <div class="repo-bar">
+      <label for="repo-select">Repo</label>
+      <select id="repo-select">
+        <option value="da-express-milo">Express (da-express-milo)</option>
+        <option value="da-dc">Acrobat / DC (da-dc)</option>
+      </select>
+    </div>
     <div class="toolbar">
       <button id="scan-all-btn">Scan All</button>
       <button id="status-btn" style="display:none">Check Status</button>

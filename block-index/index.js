@@ -7,14 +7,64 @@ import { enhanceAppLinks } from '../shared/nav.js';
 // Make the "All Tools" back-link update the outer da.live URL when embedded in da.live.
 enhanceAppLinks();
 
-const SCAN_ROOT = '/adobecom/da-express-milo';
-const AUDIT_DIR = '/adobecom/da-express-milo/drafts/da-test-tool-maxn-01';
-const LEGACY_AUDIT_PATH = `${AUDIT_DIR}/audit-results.json`;
-const GITHUB_DA_EXPRESS_API = 'https://api.github.com/repos/adobecom/da-express-milo/contents/express/code/blocks?ref=stage';
-const GITHUB_MILO_API = 'https://api.github.com/repos/adobecom/milo/contents/libs/blocks?ref=stage';
 const BATCH_SIZE = 10;
 const SKIP_DIRS = new Set(['drafts', 'tools']);
+const REPO_STORAGE_KEY = 'da-block-index-repo';
+const DEFAULT_REPO = 'da-express-milo';
+const PUBLISHED_BASE = 'https://www.adobe.com';
 
+// Every scannable repo is modelled as two block tiers: the site's own blocks + the milo
+// foundation blocks it consumes. da-express-milo and da-dc are both milo-based, so only the
+// "own" tier differs between them. Adding another milo-based site is just another REPOS entry.
+const MILO_TIER = {
+  label: 'milo',
+  github: 'https://api.github.com/repos/adobecom/milo/contents/libs/blocks?ref=stage',
+  kitchenSink: {
+    lsPath: '/adobecom/milo/docs/library/kitchen-sink',
+    base: 'https://main--milo--adobecom.aem.live',
+  },
+};
+
+const REPOS = {
+  'da-express-milo': {
+    id: 'da-express-milo',
+    label: 'Express (da-express-milo)',
+    scanRoot: '/adobecom/da-express-milo',
+    auditDir: '/adobecom/da-express-milo/drafts/da-test-tool-maxn-01',
+    legacyAuditPath: '/adobecom/da-express-milo/drafts/da-test-tool-maxn-01/audit-results.json',
+    ownColor: { text: '#fec311', bg: 'rgba(254, 195, 17, 0.1)', border: 'rgba(191, 146, 13, 0.25)' },
+    own: {
+      label: 'da-express-milo',
+      github: 'https://api.github.com/repos/adobecom/da-express-milo/contents/express/code/blocks?ref=stage',
+      kitchenSink: {
+        lsPath: '/adobecom/da-express-milo/docs/library/kitchen-sink',
+        base: 'https://main--da-express-milo--adobecom.aem.live',
+      },
+    },
+    milo: MILO_TIER,
+  },
+  'da-dc': {
+    id: 'da-dc',
+    label: 'Acrobat / DC (da-dc)',
+    scanRoot: '/adobecom/da-dc',
+    // da-dc's drafts folder is not writable for all authors, so the scan cache is stored in the
+    // da-express-milo drafts folder this tool already owns. Scanning da-dc needs only *read* access.
+    auditDir: '/adobecom/da-express-milo/drafts/da-test-tool-maxn-01/da-dc',
+    legacyAuditPath: null,
+    ownColor: { text: '#e34850', bg: 'rgba(227, 72, 80, 0.1)', border: 'rgba(227, 72, 80, 0.28)' },
+    own: {
+      label: 'da-dc',
+      github: 'https://api.github.com/repos/adobecom/da-dc/contents/acrobat/blocks?ref=stage',
+      kitchenSink: {
+        lsPath: '/adobecom/da-dc/docs/library/kitchen-sink',
+        base: 'https://main--da-dc--adobecom.aem.live',
+      },
+    },
+    milo: MILO_TIER,
+  },
+};
+
+const $repoSelect = document.getElementById('repo-select');
 const $scanAllBtn = document.getElementById('scan-all-btn');
 const $statusBtn = document.getElementById('status-btn');
 const $status = document.getElementById('status');
@@ -36,12 +86,12 @@ async function fetchGitHubDirNames(url) {
   }
 }
 
-async function fetchRepoBlocks() {
-  const [expressNames, miloNames] = await Promise.all([
-    fetchGitHubDirNames(GITHUB_DA_EXPRESS_API),
-    fetchGitHubDirNames(GITHUB_MILO_API),
+async function fetchRepoBlocks(cfg) {
+  const [ownNames, miloNames] = await Promise.all([
+    fetchGitHubDirNames(cfg.own.github),
+    fetchGitHubDirNames(cfg.milo.github),
   ]);
-  return { express: new Set(expressNames), milo: new Set(miloNames) };
+  return { own: new Set(ownNames), milo: new Set(miloNames) };
 }
 
 function extractBlocks(html) {
@@ -65,15 +115,12 @@ function extractBlocks(html) {
 }
 
 function repoBlocksFromStored(stored) {
-  if (Array.isArray(stored)) return { express: new Set(stored), milo: new Set() };
+  // Accept both the current { own, milo } shape and the legacy { express, milo } / array shapes.
+  if (Array.isArray(stored)) return { own: new Set(stored), milo: new Set() };
   return {
-    express: new Set(stored.express || []),
+    own: new Set(stored.own || stored.express || []),
     milo: new Set(stored.milo || []),
   };
-}
-
-function auditPath(dirname) {
-  return `${AUDIT_DIR}/audit-${dirname}.json`;
 }
 
 function mergeAllParts(dirParts) {
@@ -103,13 +150,13 @@ function mergeAllParts(dirParts) {
   };
 }
 
-function sortEntries(entries, expressBlocks, miloBlocks) {
+function sortEntries(entries, ownBlocks, miloBlocks) {
   if ($sortSelect.value === 'alpha') {
     return entries.sort(([nameA], [nameB]) => nameA.localeCompare(nameB));
   }
   if ($sortSelect.value === 'repo') {
     const rank = (name) => {
-      if (expressBlocks.has(name)) return 0;
+      if (ownBlocks.has(name)) return 0;
       if (miloBlocks.has(name)) return 1;
       return 2;
     };
@@ -163,58 +210,56 @@ function daEditUrl(path) {
   return `https://da.live/edit#${path.replace(/\.html$/, '')}`;
 }
 
-function publishedUrl(path) {
-  const withoutPrefix = path.replace('/adobecom/da-express-milo', '');
+function publishedUrl(cfg, path) {
+  const withoutPrefix = path.replace(cfg.scanRoot, '');
   const withoutExt = withoutPrefix.replace(/\.html$/, '');
-  return `https://www.adobe.com${withoutExt}`;
+  return `${PUBLISHED_BASE}${withoutExt}`;
 }
 
-async function fetchKitchenSinkBlocks(token) {
+async function fetchKitchenSinkBlocks(cfg, token) {
   const toSet = (items) => new Set(
     items.filter((i) => i.ext === 'html').map((i) => i.path.split('/').pop().replace(/\.html$/, '')),
   );
-  const [expressList, miloList] = await Promise.all([
-    ls('/adobecom/da-express-milo/docs/library/kitchen-sink', token).catch(() => []),
-    ls('/adobecom/milo/docs/library/kitchen-sink', token).catch(() => []),
+  const [ownList, miloList] = await Promise.all([
+    ls(cfg.own.kitchenSink.lsPath, token).catch(() => []),
+    ls(cfg.milo.kitchenSink.lsPath, token).catch(() => []),
   ]);
-  return { express: toSet(expressList), milo: toSet(miloList) };
+  return { own: toSet(ownList), milo: toSet(miloList) };
 }
 
-function kitchenSinkUrl(blockName, repoType) {
-  const base = repoType === 'milo'
-    ? 'https://main--milo--adobecom.aem.live'
-    : 'https://main--da-express-milo--adobecom.aem.live';
+function kitchenSinkUrl(cfg, blockName, tier) {
+  const base = tier === 'milo' ? cfg.milo.kitchenSink.base : cfg.own.kitchenSink.base;
   return `${base}/docs/library/kitchen-sink/${blockName}`;
 }
 
-function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
-  const { express: expressBlocks, milo: miloBlocks } = repoBlocks;
-  const allRepoBlocks = new Set([...expressBlocks, ...miloBlocks]);
+function renderResults(cfg, data, repoBlocks, publishedSet, kitchenSinkBlocks) {
+  const { own: ownBlocks, milo: miloBlocks } = repoBlocks;
+  const allRepoBlocks = new Set([...ownBlocks, ...miloBlocks]);
 
   const allBlocks = { ...data.blocks };
   for (const name of allRepoBlocks) {
     if (!allBlocks[name]) allBlocks[name] = [];
   }
 
-  const sorted = sortEntries(Object.entries(allBlocks), expressBlocks, miloBlocks);
+  const sorted = sortEntries(Object.entries(allBlocks), ownBlocks, miloBlocks);
 
   $blockCount.textContent = `${sorted.length} unique block${sorted.length !== 1 ? 's' : ''} across ${data.docCount.toLocaleString()} documents`;
 
   $legend.innerHTML = `
-    <span class="legend-express"><span class="legend-express-square">■</span> da-express-milo</span>
-    <span class="legend-milo"><span class="legend-express-square">■</span> milo</span>
+    <span class="legend-own"><span class="legend-express-square">■</span> ${cfg.own.label}</span>
+    <span class="legend-milo"><span class="legend-express-square">■</span> ${cfg.milo.label}</span>
     <span class="legend-unknown"><span class="legend-express-square">■</span> unrecognized</span>
   `;
 
   $results.innerHTML = '';
 
   for (const [blockName, paths] of sorted) {
-    const inExpress = expressBlocks.has(blockName);
+    const inOwn = ownBlocks.has(blockName);
     const inMilo = miloBlocks.has(blockName);
 
     const details = document.createElement('details');
     details.dataset.blockName = blockName;
-    if (inExpress) details.className = 'repo-express';
+    if (inOwn) details.className = 'repo-own';
     else if (inMilo) details.className = 'repo-milo';
 
     const summary = document.createElement('summary');
@@ -225,7 +270,7 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
     nameSpan.textContent = blockName;
     left.appendChild(nameSpan);
 
-    if (inExpress && inMilo) {
+    if (inOwn && inMilo) {
       const badge = document.createElement('span');
       badge.className = 'override-badge';
       badge.textContent = '↑ milo';
@@ -251,16 +296,16 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
     });
 
     // eslint-disable-next-line no-nested-ternary
-    const repoType = expressBlocks.has(blockName) ? 'express' : miloBlocks.has(blockName) ? 'milo' : null;
+    const repoType = inOwn ? 'own' : inMilo ? 'milo' : null;
     if (repoType) {
-      const ksSet = repoType === 'express' ? kitchenSinkBlocks?.express : kitchenSinkBlocks?.milo;
+      const ksSet = repoType === 'own' ? kitchenSinkBlocks?.own : kitchenSinkBlocks?.milo;
       const hasKS = ksSet?.has(blockName) ?? false;
       const ksEl = document.createElement(hasKS ? 'a' : 'span');
       ksEl.className = hasKS ? 'ks-btn' : 'ks-btn disabled';
       ksEl.innerHTML = BOOK_ICON;
       ksEl.title = hasKS ? 'View kitchen-sink docs' : 'No kitchen-sink page';
       if (hasKS) {
-        ksEl.href = kitchenSinkUrl(blockName, repoType);
+        ksEl.href = kitchenSinkUrl(cfg, blockName, repoType);
         ksEl.target = '_blank';
         ksEl.rel = 'noopener noreferrer';
         ksEl.addEventListener('click', (e) => e.stopPropagation());
@@ -275,7 +320,7 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
     copyBtn.innerHTML = COPY_ICON;
     copyBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const text = sortedPaths.map((p) => (publishedSet?.has(p) ? publishedUrl(p) : daEditUrl(p))).join('\n');
+      const text = sortedPaths.map((p) => (publishedSet?.has(p) ? publishedUrl(cfg, p) : daEditUrl(p))).join('\n');
       navigator.clipboard.writeText(text).then(() => {
         copyBtn.innerHTML = CHECK_ICON;
         copyBtn.style.color = '#2d9e2d';
@@ -299,7 +344,7 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
       if (publishedSet && publishedSet.has(path)) {
         const badge = document.createElement('a');
         badge.className = 'published-badge';
-        badge.href = publishedUrl(path);
+        badge.href = publishedUrl(cfg, path);
         badge.target = '_blank';
         badge.rel = 'noopener noreferrer';
         badge.title = 'View live page';
@@ -314,12 +359,14 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
   }
 }
 
-(async function init() {
+(async function main() {
   const { token } = await DA_SDK;
 
+  // --- Per-repo state (reset by initRepo on every repo switch) ---
+  let cfg = REPOS[DEFAULT_REPO];
   let dirs = [];
-  const dirParts = {};
-  let repoBlocks = { express: new Set(), milo: new Set() };
+  let dirParts = {};
+  let repoBlocks = { own: new Set(), milo: new Set() };
   let kitchenSinkBlocks = null;
   let isBusy = false;
   let lastRenderData = null;
@@ -330,7 +377,12 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
   function setBusy(busy) {
     isBusy = busy;
     $scanAllBtn.disabled = busy;
+    $repoSelect.disabled = busy;
     if ($statusBtn.style.display !== 'none') $statusBtn.disabled = busy;
+  }
+
+  function auditPath(dirname) {
+    return `${cfg.auditDir}/audit-${dirname}.json`;
   }
 
   function renderDirList() {
@@ -383,13 +435,13 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
     }
     lastRenderData = merged;
     lastPublishedSet = merged.publishedPaths ? new Set(merged.publishedPaths) : null;
-    renderResults(merged, repoBlocks, lastPublishedSet, kitchenSinkBlocks);
+    renderResults(cfg, merged, repoBlocks, lastPublishedSet, kitchenSinkBlocks);
     $statusBtn.style.display = '';
     $statusBtn.textContent = merged.publishedPaths?.length ? 'Refresh Status' : 'Check Status';
   }
 
   async function runScanForDir(dirName) {
-    const dirPath = `${SCAN_ROOT}/${dirName}`;
+    const dirPath = `${cfg.scanRoot}/${dirName}`;
     const blocks = {};
     let scanned = 0;
     let errors = 0;
@@ -423,7 +475,7 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
       scannedAt: new Date().toISOString(),
       docCount: docs.length,
       scanErrors: errors,
-      repoBlocks: { express: [...repoBlocks.express], milo: [...repoBlocks.milo] },
+      repoBlocks: { own: [...repoBlocks.own], milo: [...repoBlocks.milo] },
       blocks,
     };
   }
@@ -481,72 +533,7 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
     }
   }
 
-  // --- Init ---
-
-  setStatus('Loading…');
-
-  const [rootItems, rb, ksb] = await Promise.all([
-    ls(SCAN_ROOT, token).catch(() => []),
-    fetchRepoBlocks(),
-    fetchKitchenSinkBlocks(token),
-  ]);
-  kitchenSinkBlocks = ksb;
-
-  // Fall back to stored repo blocks if GitHub fetch returned nothing
-  repoBlocks = (rb.express.size > 0 || rb.milo.size > 0) ? rb : (() => {
-    const stored = Object.values(dirParts).find((p) => p && p.repoBlocks);
-    return stored ? repoBlocksFromStored(stored.repoBlocks) : rb;
-  })();
-
-  dirs = rootItems
-    .filter((item) => !item.ext && !SKIP_DIRS.has(item.path.split('/').pop()))
-    .map((item) => item.path.split('/').pop())
-    .sort();
-
-  if (dirs.length === 0) {
-    setStatus('No content directories found under repo root.');
-    return;
-  }
-
-  // Migrate legacy audit-results.json → audit-express.json on first load
-  const expressData = await readJson(auditPath('express'), token);
-  if (!expressData && dirs.includes('express')) {
-    const legacy = await readJson(LEGACY_AUDIT_PATH, token);
-    if (legacy) {
-      await writeJson(auditPath('express'), legacy, token);
-      dirParts.express = legacy;
-    }
-  } else {
-    dirParts.express = expressData || null;
-  }
-
-  // Load all other partial results in parallel
-  await Promise.all(
-    dirs.filter((d) => d !== 'express').map(async (dir) => {
-      dirParts[dir] = await readJson(auditPath(dir), token);
-    }),
-  );
-
-  // Update repoBlocks fallback now that dirParts is populated
-  if (repoBlocks.express.size === 0 && repoBlocks.milo.size === 0) {
-    const stored = Object.values(dirParts).find((p) => p && p.repoBlocks);
-    if (stored) repoBlocks = repoBlocksFromStored(stored.repoBlocks);
-  }
-
-  setStatus('');
-  renderDirList();
-  renderMergedResults();
-
-  $scanAllBtn.addEventListener('click', scanAllDirs);
-
-  $sortSelect.addEventListener('change', () => {
-    if (!lastRenderData) return;
-    applyFlipAnimation($results, () => {
-      renderResults(lastRenderData, repoBlocks, lastPublishedSet, kitchenSinkBlocks);
-    });
-  });
-
-  $statusBtn.addEventListener('click', async () => {
+  async function checkStatus() {
     if (isBusy) return;
     setBusy(true);
 
@@ -592,5 +579,114 @@ function renderResults(data, repoBlocks, publishedSet, kitchenSinkBlocks) {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function initRepo(repoId) {
+    cfg = REPOS[repoId] || REPOS[DEFAULT_REPO];
+
+    // Reset per-repo state and UI.
+    dirs = [];
+    dirParts = {};
+    repoBlocks = { own: new Set(), milo: new Set() };
+    kitchenSinkBlocks = null;
+    lastRenderData = null;
+    lastPublishedSet = null;
+
+    document.documentElement.style.setProperty('--own-color', cfg.ownColor.text);
+    document.documentElement.style.setProperty('--own-bg', cfg.ownColor.bg);
+    document.documentElement.style.setProperty('--own-border', cfg.ownColor.border);
+
+    $blockCount.textContent = '';
+    $legend.innerHTML = '';
+    $results.innerHTML = '';
+    $dirList.innerHTML = '';
+    $statusBtn.style.display = 'none';
+
+    setBusy(true);
+    setStatus('Loading…');
+
+    const [rootItems, rb, ksb] = await Promise.all([
+      ls(cfg.scanRoot, token).catch(() => []),
+      fetchRepoBlocks(cfg),
+      fetchKitchenSinkBlocks(cfg, token),
+    ]);
+    kitchenSinkBlocks = ksb;
+
+    // Fall back to stored repo blocks (below) if the GitHub fetch returned nothing.
+    repoBlocks = (rb.own.size > 0 || rb.milo.size > 0) ? rb : { own: new Set(), milo: new Set() };
+
+    dirs = rootItems
+      .filter((item) => !item.ext && !SKIP_DIRS.has(item.path.split('/').pop()))
+      .map((item) => item.path.split('/').pop())
+      .sort();
+
+    if (dirs.length === 0) {
+      setStatus(`No content directories found under ${cfg.scanRoot} — check your read access to this repo.`);
+      setBusy(false);
+      return;
+    }
+
+    if (cfg.legacyAuditPath) {
+      // Migrate legacy audit-results.json → audit-express.json on first load (express only).
+      const expressData = await readJson(auditPath('express'), token);
+      if (!expressData && dirs.includes('express')) {
+        const legacy = await readJson(cfg.legacyAuditPath, token);
+        if (legacy) {
+          await writeJson(auditPath('express'), legacy, token);
+          dirParts.express = legacy;
+        }
+      } else {
+        dirParts.express = expressData || null;
+      }
+      await Promise.all(
+        dirs.filter((d) => d !== 'express').map(async (dir) => {
+          dirParts[dir] = await readJson(auditPath(dir), token);
+        }),
+      );
+    } else {
+      await Promise.all(
+        dirs.map(async (dir) => {
+          dirParts[dir] = await readJson(auditPath(dir), token);
+        }),
+      );
+    }
+
+    // Update repoBlocks fallback now that dirParts is populated.
+    if (repoBlocks.own.size === 0 && repoBlocks.milo.size === 0) {
+      const stored = Object.values(dirParts).find((p) => p && p.repoBlocks);
+      if (stored) repoBlocks = repoBlocksFromStored(stored.repoBlocks);
+    }
+
+    setStatus('');
+    setBusy(false);
+    renderDirList();
+    renderMergedResults();
+  }
+
+  // --- Wire up controls once; they read the current repo's closure state. ---
+  $scanAllBtn.addEventListener('click', scanAllDirs);
+  $statusBtn.addEventListener('click', checkStatus);
+
+  $sortSelect.addEventListener('change', () => {
+    if (!lastRenderData) return;
+    applyFlipAnimation($results, () => {
+      renderResults(cfg, lastRenderData, repoBlocks, lastPublishedSet, kitchenSinkBlocks);
+    });
   });
+
+  $repoSelect.addEventListener('change', () => {
+    if (isBusy) { $repoSelect.value = cfg.id; return; }
+    const id = $repoSelect.value;
+    try { localStorage.setItem(REPO_STORAGE_KEY, id); } catch { /* ignore */ }
+    initRepo(id);
+  });
+
+  // --- Initial load ---
+  let initialRepo = DEFAULT_REPO;
+  try {
+    const saved = localStorage.getItem(REPO_STORAGE_KEY);
+    if (saved && REPOS[saved]) initialRepo = saved;
+  } catch { /* ignore */ }
+  $repoSelect.value = initialRepo;
+  await initRepo(initialRepo);
 }());
