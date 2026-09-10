@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { scanDocs, recheckStatuses, backfillIdentity, writeFieldValue, type ScanPhase } from '../lib/documentManager';
+import { scanDocs, recheckStatuses, loadDocInfo, backfillIdentity, writeFieldValue, type ScanPhase } from '../lib/documentManager';
 import { checkGmcStatus } from '../lib/gmcSubmit';
 import { getToken } from '../api/daApi';
 import type { CrawlError, DocFetchError } from '../api/crawl';
@@ -74,6 +74,10 @@ export default function DocumentManagerTab() {
   const [checkingGmcBulk, setCheckingGmcBulk] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [includeContent, setIncludeContent] = useState(false);
+  const includeContentRef = useRef(false); // snapshot of includeContent at the moment Scan is clicked
+  const [docInfoState, setDocInfoState] = useState<'none' | 'loading' | 'loaded'>('none');
+  const opIdRef = useRef(0); // cancel token shared by the manual async ops (status recheck + doc-info load)
 
   // Warn before leaving the page once a scan has loaded documents, so an author
   // doesn't lose a crawl (and any inline edits) by closing/reloading.
@@ -84,9 +88,25 @@ export default function DocumentManagerTab() {
 
   const actions = useDaDocumentActions<ManagedDoc>(setDocs, { afterDelete: () => undefined });
 
+  // Strict single-operation lock: while any long op runs (scan, doc-info load, status recheck, or a
+  // bulk/GMC action), every trigger is disabled so two operations can never overlap.
+  const anyBusy = scanning || busy;
+
+  // Cancel any in-flight manual op (recheck / doc-info load) when the view unmounts (navigate away).
+  useEffect(() => () => { opIdRef.current += 1; }, []);
+
   function handleScan() {
+    if (anyBusy) return;
     const trimmed = rootPathInput.trim();
     if (!trimmed) return;
+    includeContentRef.current = includeContent;
+    // A new scan supersedes any in-flight manual op (recheck / doc-info load) and resets doc-info
+    // state + the content/tree-dependent filters (the tree changed and content is cleared).
+    opIdRef.current += 1;
+    setDocInfoState('none');
+    setSubDirFilter(ALL);
+    setBatchFilter(ALL);
+    setIssuesOnly(false);
     setRootPath(trimmed);
     setScanNonce((n) => n + 1);
   }
@@ -121,12 +141,14 @@ export default function DocumentManagerTab() {
         setScanProgress({ phase, done, total });
       },
       cancelled: () => stale,
-    }).then(
+    }, { includeContent: includeContentRef.current }).then(
       ({ errors }) => {
         if (stale) return;
         setCrawlErrors(errors);
         setHasScanned(true);
         setScanProgress(null);
+        // Content was fetched inline only when the box was checked at Scan time.
+        setDocInfoState(includeContentRef.current ? 'loaded' : 'none');
       },
       (err: unknown) => {
         if (stale) return;
@@ -142,23 +164,46 @@ export default function DocumentManagerTab() {
   // Re-resolve publish/preview status for a set of already-listed rows — no re-crawl, no source
   // re-fetch. Shared by "Recheck status" (unknowns only) and "Refresh status" (all rows).
   async function runStatusCheck(paths: string[]) {
-    if (scanning || paths.length === 0) return;
+    if (anyBusy || paths.length === 0) return;
+    const myId = (opIdRef.current += 1);
     setScanProgress({ phase: 'checking', done: 0, total: paths.length });
     try {
       await recheckStatuses(paths, {
         onStatuses: (updates) => {
+          if (opIdRef.current !== myId) return;
           const byPath = new Map(updates.map((u) => [u.path, u]));
           setDocs((prev) => prev.map((d) => {
             const u = byPath.get(d.path);
             return u ? { ...d, ...u } : d;
           }));
         },
-        onProgress: (phase, done, total) => setScanProgress({ phase, done, total }),
-        cancelled: () => false,
+        onProgress: (phase, done, total) => { if (opIdRef.current === myId) setScanProgress({ phase, done, total }); },
+        cancelled: () => opIdRef.current !== myId,
       });
     } finally {
-      setScanProgress(null);
+      if (opIdRef.current === myId) setScanProgress(null);
     }
+  }
+
+  // Opt-in content load ("Fetch document info"): fetch each doc's source + parse its content columns
+  // (title, product type, batch, …) without re-crawling or re-checking status.
+  async function handleFetchDocInfo() {
+    if (anyBusy || rootPath === null || docs.length === 0) return;
+    const myId = (opIdRef.current += 1);
+    setDocInfoState('loading');
+    setScanProgress({ phase: 'loading', done: 0, total: docs.length });
+    await loadDocInfo(rootPath, docs.map((d) => d.path), {
+      onRecords: (records) => {
+        if (opIdRef.current !== myId) return;
+        const byPath = new Map(records.map((r) => [r.path, r]));
+        setDocs((prev) => prev.map((d) => byPath.get(d.path) ?? d));
+      },
+      onProgress: (phase, done, total) => { if (opIdRef.current === myId) setScanProgress({ phase, done, total }); },
+      cancelled: () => opIdRef.current !== myId,
+    });
+    if (opIdRef.current !== myId) return;
+    setScanProgress(null);
+    setDocInfoState('loaded');
   }
 
   // Retry only the rows that came back Unknown (amber banner action).
@@ -394,16 +439,37 @@ export default function DocumentManagerTab() {
         <button
           type="button"
           onClick={handleScan}
-          disabled={scanning || !rootPathInput.trim()}
+          disabled={anyBusy || !rootPathInput.trim()}
           className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
         >
           {scanning ? 'Scanning…' : rootPath === rootPathInput.trim() && hasScanned ? 'Rescan' : 'Scan'}
         </button>
+        <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer" title="Fetch each document's content (title, product type, batch, etc.) during the scan. Slower — leave off for a fast scan and fetch on demand.">
+          <input
+            type="checkbox"
+            checked={includeContent}
+            onChange={(e) => setIncludeContent(e.target.checked)}
+            disabled={anyBusy}
+            className="cursor-pointer disabled:cursor-not-allowed"
+          />
+          Include document content
+        </label>
+        {hasScanned && !scanning && docs.length > 0 && docInfoState === 'none' && (
+          <button
+            type="button"
+            onClick={() => void handleFetchDocInfo()}
+            disabled={anyBusy}
+            className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+          >
+            Fetch document info
+          </button>
+        )}
         {hasScanned && !scanning && docs.length > 0 && (
           <button
             type="button"
             onClick={handleRefreshStatus}
-            className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-xl border border-gray-300 hover:bg-gray-50 cursor-pointer transition-colors"
+            disabled={anyBusy}
+            className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
           >
             Refresh status
           </button>
@@ -441,7 +507,8 @@ export default function DocumentManagerTab() {
             <button
               type="button"
               onClick={handleRecheckUnknowns}
-              className="font-medium text-amber-800 underline hover:text-amber-900 cursor-pointer whitespace-nowrap"
+              disabled={anyBusy}
+              className="font-medium text-amber-800 underline hover:text-amber-900 disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
             >
               Recheck status
             </button>
@@ -453,12 +520,16 @@ export default function DocumentManagerTab() {
         <>
           <div className="flex items-center gap-3 flex-wrap text-sm">
             <FilterSelect label="Sub-directory" value={subDirFilter} onChange={setSubDirFilter} options={subDirectories} />
-            <FilterSelect label="Batch" value={batchFilter} onChange={setBatchFilter} options={batches} formatOption={(b) => (b === LEGACY_BATCH ? b : new Date(b).toLocaleString())} />
+            {docInfoState === 'loaded' && (
+              <FilterSelect label="Batch" value={batchFilter} onChange={setBatchFilter} options={batches} formatOption={(b) => (b === LEGACY_BATCH ? b : new Date(b).toLocaleString())} />
+            )}
             <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter} options={['generated', 'previewed', 'published', 'error']} formatOption={(s) => (s === 'generated' ? 'Draft' : s[0].toUpperCase() + s.slice(1))} />
-            <label className="flex items-center gap-1.5 text-gray-600 cursor-pointer">
-              <input type="checkbox" checked={issuesOnly} onChange={(e) => setIssuesOnly(e.target.checked)} className="cursor-pointer" />
-              Issues only
-            </label>
+            {docInfoState === 'loaded' && (
+              <label className="flex items-center gap-1.5 text-gray-600 cursor-pointer">
+                <input type="checkbox" checked={issuesOnly} onChange={(e) => setIssuesOnly(e.target.checked)} className="cursor-pointer" />
+                Issues only
+              </label>
+            )}
 
             {(subDirFilter !== ALL || batchFilter !== ALL || statusFilter !== ALL || issuesOnly) && (
               <span className="text-gray-500">{filtered.length} shown</span>
@@ -508,10 +579,10 @@ export default function DocumentManagerTab() {
           </div>
 
           <div className="flex items-center gap-3 flex-wrap text-sm">
-            <EnvToggle value={bulkCheckEnv} onChange={setBulkCheckEnv} disabled={busy} />
+            <EnvToggle value={bulkCheckEnv} onChange={setBulkCheckEnv} disabled={anyBusy} />
             <button
               type="button"
-              disabled={busy}
+              disabled={anyBusy}
               onClick={() => void handleCheckGmcStatus()}
               className="px-3.5 py-1.5 bg-gray-100 text-gray-700 text-xs font-medium rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors border border-gray-300 inline-flex items-center gap-1.5"
             >
@@ -530,7 +601,7 @@ export default function DocumentManagerTab() {
             selectedCount={selected.size}
             canBackfill={canBackfill}
             canSubmitGmc={canSubmitGmc}
-            busy={busy}
+            busy={anyBusy}
             onPreview={() => setConfirmOp('preview')}
             onPublish={() => setConfirmOp('publish')}
             onUnpublish={() => setConfirmOp('unpublish')}

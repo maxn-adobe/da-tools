@@ -62,7 +62,7 @@ export default function DocumentManagerView() {
   const [batchFilter, setBatchFilter] = useState<string>(ALL);
   const [batchDataState, setBatchDataState] = useState<'none' | 'loading' | 'loaded'>('none');
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
-  const batchLoadId = useRef(0); // monotonic cancel token for the in-flight batch load
+  const opIdRef = useRef(0); // cancel token shared by the manual async ops (status recheck + batch load)
   const [sortField, setSortField] = useState<SortField>('path');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   const [confirmOp, setConfirmOp] = useState<BulkConfirmOp | null>(null);
@@ -78,7 +78,16 @@ export default function DocumentManagerView() {
 
   const actions = useDaDocumentActions<DocRow>(setDocs, { afterDelete: () => undefined });
 
+  // Strict single-operation lock: while any long op runs (scan, status recheck, batch load, or a
+  // bulk action), every trigger is disabled so two operations can never overlap.
+  const anyBusy = scanning || validating || batchDataState === 'loading' || busy;
+
+  // Cancel any in-flight manual op (recheck / batch load) when the view unmounts (navigate away),
+  // so its callbacks never fire on an unmounted component. The scan is cancelled by its own cleanup.
+  useEffect(() => () => { opIdRef.current += 1; }, []);
+
   async function handleScan() {
+    if (anyBusy) return;
     const trimmed = rootPathInput.trim();
     if (!trimmed) return;
     // A DA path is /org/repo[/subpath…]; org + repo are required (parseDAPath derives them).
@@ -103,9 +112,9 @@ export default function DocumentManagerView() {
   // (flipped in cleanup) makes a superseded or unmounted scan's callbacks no-ops.
   useEffect(() => {
     if (rootPath === null) return;
-    // A new scan invalidates any in-flight batch-metadata load and resets the drill nav + filters
-    // (the tree changed, so a stale prefix/batch could point at folders/values that no longer exist).
-    batchLoadId.current += 1;
+    // A new scan supersedes any in-flight manual op (recheck / batch load) and resets the drill nav
+    // + filters (the tree changed, so a stale prefix/batch could point at things that no longer exist).
+    opIdRef.current += 1;
     setBatchDataState('none');
     setBatchFilter(ALL);
     setBatchProgress(null);
@@ -153,22 +162,24 @@ export default function DocumentManagerView() {
   // Re-resolve status for a set of already-listed rows — no re-crawl. Shared by "Recheck status"
   // (unknowns only) and "Refresh status" (all rows).
   async function runStatusCheck(paths: string[]) {
-    if (scanning || paths.length === 0) return;
+    if (anyBusy || paths.length === 0) return;
+    const myId = (opIdRef.current += 1);
     setScanProgress({ phase: 'checking', done: 0, total: paths.length });
     try {
       await recheckStatuses(paths, {
         onStatuses: (updates) => {
+          if (opIdRef.current !== myId) return;
           const byPath = new Map(updates.map((u) => [u.path, u]));
           setDocs((prev) => prev.map((d) => {
             const u = byPath.get(d.path);
             return u ? { ...d, ...u, lastUpdated: d.lastUpdated ?? u.lastUpdated } : d;
           }));
         },
-        onProgress: (phase, done, total) => setScanProgress({ phase, done, total }),
-        cancelled: () => false,
+        onProgress: (phase, done, total) => { if (opIdRef.current === myId) setScanProgress({ phase, done, total }); },
+        cancelled: () => opIdRef.current !== myId,
       });
     } finally {
-      setScanProgress(null);
+      if (opIdRef.current === myId) setScanProgress(null);
     }
   }
 
@@ -183,13 +194,13 @@ export default function DocumentManagerView() {
   // Opt-in per-doc metadata pass — populates `generatedBatch` and enables the Batch filter. A
   // monotonic id makes a superseded (rescanned) load's callbacks no-ops.
   async function handleLoadBatchData() {
-    if (batchDataState === 'loading' || docs.length === 0) return;
-    const myId = (batchLoadId.current += 1);
+    if (anyBusy || docs.length === 0) return;
+    const myId = (opIdRef.current += 1);
     setBatchDataState('loading');
     setBatchProgress({ done: 0, total: docs.length });
     await loadBatchMetadata(docs.map((d) => d.path), {
       onBatches: (updates) => {
-        if (batchLoadId.current !== myId) return;
+        if (opIdRef.current !== myId) return;
         const byPath = new Map(updates.map((u) => [u.path, u]));
         setDocs((prev) => prev.map((d) => {
           const u = byPath.get(d.path);
@@ -197,11 +208,11 @@ export default function DocumentManagerView() {
         }));
       },
       onProgress: (done, total) => {
-        if (batchLoadId.current === myId) setBatchProgress({ done, total });
+        if (opIdRef.current === myId) setBatchProgress({ done, total });
       },
-      cancelled: () => batchLoadId.current !== myId,
+      cancelled: () => opIdRef.current !== myId,
     });
-    if (batchLoadId.current !== myId) return;
+    if (opIdRef.current !== myId) return;
     setBatchDataState('loaded');
     setBatchProgress(null);
   }
@@ -359,7 +370,7 @@ export default function DocumentManagerView() {
         <button
           type="button"
           onClick={() => void handleScan()}
-          disabled={scanning || validating || !rootPathInput.trim()}
+          disabled={anyBusy || !rootPathInput.trim()}
           className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
         >
           {validating ? 'Checking…' : scanning ? 'Scanning…' : rootPath === rootPathInput.trim() && hasScanned ? 'Rescan' : 'Scan'}
@@ -368,7 +379,8 @@ export default function DocumentManagerView() {
           <button
             type="button"
             onClick={handleRefreshStatus}
-            className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-xl border border-gray-300 hover:bg-gray-50 cursor-pointer transition-colors"
+            disabled={anyBusy}
+            className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
           >
             Refresh status
           </button>
@@ -405,7 +417,8 @@ export default function DocumentManagerView() {
           <button
             type="button"
             onClick={handleRecheckUnknowns}
-            className="font-medium text-amber-800 underline hover:text-amber-900 cursor-pointer whitespace-nowrap"
+            disabled={anyBusy}
+            className="font-medium text-amber-800 underline hover:text-amber-900 disabled:opacity-50 disabled:no-underline disabled:cursor-not-allowed cursor-pointer whitespace-nowrap"
           >
             Recheck status
           </button>
@@ -443,7 +456,8 @@ export default function DocumentManagerView() {
               <button
                 type="button"
                 onClick={() => void handleLoadBatchData()}
-                className="px-3 py-1.5 bg-white text-gray-700 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 cursor-pointer transition-colors"
+                disabled={anyBusy}
+                className="px-3 py-1.5 bg-white text-gray-700 text-sm font-medium rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
               >
                 Load batch data
               </button>
@@ -519,10 +533,10 @@ export default function DocumentManagerView() {
           {selected.size > 0 && (
             <div className="flex items-center gap-2 flex-wrap text-sm bg-gray-50 border border-gray-200 rounded-xl px-4 py-2">
               <span className="font-medium text-gray-700">{selected.size} selected</span>
-              <BulkButton label="Preview" onClick={() => setConfirmOp('preview')} busy={busy} className="text-indigo-700 hover:bg-indigo-50 border-indigo-200" />
-              <BulkButton label="Publish" onClick={() => setConfirmOp('publish')} busy={busy} className="text-green-700 hover:bg-green-50 border-green-200" />
-              <BulkButton label="Unpublish" onClick={() => setConfirmOp('unpublish')} busy={busy} className="text-red-700 hover:bg-red-50 border-red-200" />
-              <BulkButton label="Delete" onClick={() => setConfirmOp('delete')} busy={busy} className="text-red-700 hover:bg-red-50 border-red-200" />
+              <BulkButton label="Preview" onClick={() => setConfirmOp('preview')} busy={anyBusy} className="text-indigo-700 hover:bg-indigo-50 border-indigo-200" />
+              <BulkButton label="Publish" onClick={() => setConfirmOp('publish')} busy={anyBusy} className="text-green-700 hover:bg-green-50 border-green-200" />
+              <BulkButton label="Unpublish" onClick={() => setConfirmOp('unpublish')} busy={anyBusy} className="text-red-700 hover:bg-red-50 border-red-200" />
+              <BulkButton label="Delete" onClick={() => setConfirmOp('delete')} busy={anyBusy} className="text-red-700 hover:bg-red-50 border-red-200" />
               <button
                 type="button"
                 onClick={() => setSelected(new Set())}

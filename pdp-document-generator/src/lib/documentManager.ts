@@ -139,27 +139,17 @@ function emitStatuses(
 }
 
 /**
- * Segmented, progressive scan: (1) discover paths and emit placeholder rows immediately,
- * (2) fetch/parse each doc's metadata in batches, (3) live-check publish/preview status
- * last — deferred and resilient (fast-fail + circuit breaker) so a blocked or slow status
- * endpoint can never hang the scan. Progress and partial results stream via callbacks; the
- * caller aborts an in-flight scan by flipping `cancelled()`.
+ * Fetch + parse each doc's content metadata (the heavy per-doc `/source` GET), streamed to
+ * `onRecords` in FLUSH_SIZE batches (one merge per batch, not per doc). Shared by the optional
+ * content phase of `scanDocs` and the on-demand `loadDocInfo`.
  */
-export async function scanDocs(
+async function fetchContentRecords(
   rootPath: string,
-  cb: ScanCallbacks,
-): Promise<{ errors: (CrawlError | DocFetchError)[] }> {
-  // Phase 1 — discovery. Emit placeholder rows the moment paths are known.
-  cb.onProgress('discovering', 0, 0);
-  const crawl = await crawlDirectory(rootPath, { concurrency: CRAWL_CONCURRENCY });
-  if (cb.cancelled()) return { errors: crawl.errors };
-  const paths = crawl.docs.map((d) => d.path);
-  const total = paths.length;
-  cb.onDiscovered(paths.map((p) => placeholderDoc(p, rootPath)), total);
-
-  // Phase 2 — metadata (heavy per-doc fetch/parse), streamed in batches. Row updates and
-  // progress fire at the flush cadence (not per doc) to avoid a re-render on every document.
+  paths: string[],
+  cb: Pick<ScanCallbacks, 'onRecords' | 'onProgress' | 'cancelled'>,
+): Promise<DocFetchError[]> {
   const fetchErrors: DocFetchError[] = [];
+  const total = paths.length;
   let parsed = 0;
   let recBuf: ManagedDoc[] = [];
   cb.onProgress('loading', 0, total);
@@ -177,7 +167,35 @@ export async function scanDocs(
       cb.onProgress('loading', parsed, total);
     }
   }, CRAWL_CONCURRENCY);
-  if (cb.cancelled()) return { errors: [...crawl.errors, ...fetchErrors] };
+  return fetchErrors;
+}
+
+/**
+ * Segmented, progressive scan: (1) discover paths and emit placeholder rows immediately, then
+ * (3) live-check publish/preview status via the bulk job. Content metadata (2) is OPTIONAL — off
+ * by default for a fast scan, run inline when `opts.includeContent` is set, or later on demand via
+ * `loadDocInfo`. Progress + partial results stream via callbacks; abort by flipping `cancelled()`.
+ */
+export async function scanDocs(
+  rootPath: string,
+  cb: ScanCallbacks,
+  opts: { includeContent?: boolean } = {},
+): Promise<{ errors: (CrawlError | DocFetchError)[] }> {
+  // Phase 1 — discovery. Emit placeholder rows the moment paths are known.
+  cb.onProgress('discovering', 0, 0);
+  const crawl = await crawlDirectory(rootPath, { concurrency: CRAWL_CONCURRENCY });
+  if (cb.cancelled()) return { errors: crawl.errors };
+  const paths = crawl.docs.map((d) => d.path);
+  const total = paths.length;
+  cb.onDiscovered(paths.map((p) => placeholderDoc(p, rootPath)), total);
+
+  // Phase 2 — content metadata (heavy per-doc fetch/parse). OPTIONAL: skipped by default for a fast
+  // scan; run here only when includeContent is set, or later on demand via loadDocInfo.
+  const fetchErrors: DocFetchError[] = [];
+  if (opts.includeContent && total > 0) {
+    fetchErrors.push(...await fetchContentRecords(rootPath, paths, cb));
+    if (cb.cancelled()) return { errors: [...crawl.errors, ...fetchErrors] };
+  }
 
   // Phase 3 — status. Resolve publish/preview state for the whole set via the bulk status job
   // (one async job) with an authless CDN-HEAD fallback — no per-doc calls to the rate-limited
@@ -194,6 +212,21 @@ export async function scanDocs(
   }
 
   return { errors: [...crawl.errors, ...fetchErrors] };
+}
+
+/**
+ * On-demand content load ("Fetch document info"): fetch + parse each doc's content metadata for a
+ * set of already-listed rows, WITHOUT re-crawling or re-checking status. Mirrors the optional
+ * phase-2 of `scanDocs`; results stream via `onRecords`.
+ */
+export async function loadDocInfo(
+  rootPath: string,
+  paths: string[],
+  cb: Pick<ScanCallbacks, 'onRecords' | 'onProgress' | 'cancelled'>,
+): Promise<{ errors: DocFetchError[] }> {
+  if (paths.length === 0) return { errors: [] };
+  const errors = await fetchContentRecords(rootPath, paths, cb);
+  return { errors };
 }
 
 /**
