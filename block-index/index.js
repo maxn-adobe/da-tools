@@ -30,8 +30,7 @@ const REPOS = {
     id: 'da-express-milo',
     label: 'Express (da-express-milo)',
     scanRoot: '/adobecom/da-express-milo',
-    auditDir: '/adobecom/da-express-milo/drafts/da-test-tool-maxn-01',
-    legacyAuditPath: '/adobecom/da-express-milo/drafts/da-test-tool-maxn-01/audit-results.json',
+    auditDir: '/adobecom/da-express-milo/drafts/maxn/block-index-data/da-express-milo',
     ownColor: { text: '#fec311', bg: 'rgba(254, 195, 17, 0.1)', border: 'rgba(191, 146, 13, 0.25)' },
     own: {
       label: 'da-express-milo',
@@ -49,8 +48,7 @@ const REPOS = {
     scanRoot: '/adobecom/da-dc',
     // da-dc's drafts folder is not writable for all authors, so the scan cache is stored in the
     // da-express-milo drafts folder this tool already owns. Scanning da-dc needs only *read* access.
-    auditDir: '/adobecom/da-express-milo/drafts/da-test-tool-maxn-01/da-dc',
-    legacyAuditPath: null,
+    auditDir: '/adobecom/da-express-milo/drafts/maxn/block-index-data/da-dc',
     ownColor: { text: '#e34850', bg: 'rgba(227, 72, 80, 0.1)', border: 'rgba(227, 72, 80, 0.28)' },
     own: {
       label: 'da-dc',
@@ -626,30 +624,12 @@ function renderResults(cfg, data, repoBlocks, publishedSet, kitchenSinkBlocks) {
       return;
     }
 
-    if (cfg.legacyAuditPath) {
-      // Migrate legacy audit-results.json → audit-express.json on first load (express only).
-      const expressData = await readJson(auditPath('express'), token);
-      if (!expressData && dirs.includes('express')) {
-        const legacy = await readJson(cfg.legacyAuditPath, token);
-        if (legacy) {
-          await writeJson(auditPath('express'), legacy, token);
-          dirParts.express = legacy;
-        }
-      } else {
-        dirParts.express = expressData || null;
-      }
-      await Promise.all(
-        dirs.filter((d) => d !== 'express').map(async (dir) => {
-          dirParts[dir] = await readJson(auditPath(dir), token);
-        }),
-      );
-    } else {
-      await Promise.all(
-        dirs.map(async (dir) => {
-          dirParts[dir] = await readJson(auditPath(dir), token);
-        }),
-      );
-    }
+    // Load each dir's cached scan (missing files → null → "never scanned").
+    await Promise.all(
+      dirs.map(async (dir) => {
+        dirParts[dir] = await readJson(auditPath(dir), token);
+      }),
+    );
 
     // Update repoBlocks fallback now that dirParts is populated.
     if (repoBlocks.own.size === 0 && repoBlocks.milo.size === 0) {
