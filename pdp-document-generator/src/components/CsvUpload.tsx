@@ -1,4 +1,5 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import Papa from 'papaparse';
 import * as XLSX from 'xlsx';
 import type { CsvRow, InputSummary } from '../types';
@@ -69,6 +70,31 @@ function checkMojibake(value: string): boolean {
 
 const PLACEHOLDER_COLUMNS = ['product_id', 'product_type', 'url_slug', 'title', 'description'];
 const PLACEHOLDER_ROW: CsvRow = { _id: 'placeholder', product_id: '-', product_type: '-', url_slug: '-', title: '-', description: '-' };
+// Stable reference for the empty/placeholder state so `visibleRows` (and everything derived from it)
+// doesn't get a fresh array every render.
+const PLACEHOLDER_ROWS: CsvRow[] = [PLACEHOLDER_ROW];
+
+// Fixed per-column pixel widths (name-keyed, with a default) so the sticky header and every
+// virtualized row share one CSS grid template and stay aligned. Fixed widths — not fr/minmax —
+// give the grid a real total width that scrolls horizontally instead of squashing columns, the
+// same convention as DocumentManagerTable / gmcGrid.
+const COL_WIDTH: Record<string, number> = {
+  product_id: 380,
+  url_slug: 240,
+  title: 280,
+  short_title: 240,
+  description: 380,
+  product_type: 160,
+  department_name: 180,
+  initial_pretty_preferred_view_url: 320,
+  plural_unit_label: 160,
+  singular_unit_label: 160,
+};
+const DEFAULT_COL_W = 200;
+const CHECKBOX_W = 44;
+const INDEX_W = 48;
+const API_W = 56;
+const colWidth = (c: string) => COL_WIDTH[c] ?? DEFAULT_COL_W;
 
 function computeSummary(rows: CsvRow[]): InputSummary {
   
@@ -261,15 +287,19 @@ export default function CsvUpload({ rows, onChange, onReadinessChange, onSelecti
   const fileRef = useRef<HTMLInputElement>(null);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
-  const summary = computeSummary(rows);
+  const summary = useMemo(() => computeSummary(rows), [rows]);
   const hasData = rows.length > 0;
-  const baseCols = columns.length > 0
-    ? columns
-    : Object.keys(rows[0] ?? {}).filter((k) => k !== '_id');
-  const tableColumns = hasData
-    ? [...baseCols, ...['url_slug', 'description', 'product_type'].filter((c) => !baseCols.includes(c))]
-    : PLACEHOLDER_COLUMNS;
-  const visibleRows = hasData ? rows : [PLACEHOLDER_ROW];
+  const baseCols = useMemo(
+    () => (columns.length > 0 ? columns : Object.keys(rows[0] ?? {}).filter((k) => k !== '_id')),
+    [columns, rows],
+  );
+  const tableColumns = useMemo(
+    () => (hasData
+      ? [...baseCols, ...['url_slug', 'description', 'product_type'].filter((c) => !baseCols.includes(c))]
+      : PLACEHOLDER_COLUMNS),
+    [hasData, baseCols],
+  );
+  const visibleRows = useMemo(() => (hasData ? rows : PLACEHOLDER_ROWS), [hasData, rows]);
 
   const warningCounts = useMemo(() => {
     const counts: Partial<Record<ContentWarningType, number>> = {};
@@ -282,8 +312,10 @@ export default function CsvUpload({ rows, onChange, onReadinessChange, onSelecti
     return counts;
   }, [contentWarnings]);
 
-  const sortedRows = useMemo(() => {
-    if (!hasData) return visibleRows;
+  // Warning priority is expensive (iterates columns + flattens content warnings). Compute it once
+  // per row here, then reuse the map for both the sort comparator and firstWarningIndex — instead
+  // of calling computeRowWarningPriority twice per comparison (~2·n·log n heavy calls).
+  const rowPriorities = useMemo(() => {
     const opts = {
       tableColumns,
       duplicateProductIdRowIds: summary.duplicateProductIdRowIds,
@@ -292,23 +324,22 @@ export default function CsvUpload({ rows, onChange, onReadinessChange, onSelecti
       zazzleHydratedFields,
       zazzleReferenceValues,
     };
-    return [...visibleRows].sort(
-      (a, b) => computeRowWarningPriority(a, opts) - computeRowWarningPriority(b, opts),
-    );
+    const map = new Map<string, number>();
+    for (const row of visibleRows) map.set(row._id, computeRowWarningPriority(row, opts));
+    return map;
   }, [visibleRows, tableColumns, summary, contentWarnings, zazzleHydratedFields, zazzleReferenceValues]);
+
+  const sortedRows = useMemo(() => {
+    if (!hasData) return visibleRows;
+    return [...visibleRows].sort(
+      (a, b) => (rowPriorities.get(a._id) ?? 0) - (rowPriorities.get(b._id) ?? 0),
+    );
+  }, [hasData, visibleRows, rowPriorities]);
 
   const firstWarningIndex = useMemo(() => {
     if (!hasData) return -1;
-    const opts = {
-      tableColumns,
-      duplicateProductIdRowIds: summary.duplicateProductIdRowIds,
-      duplicateSlugRowIds: summary.duplicateSlugRowIds,
-      contentWarnings,
-      zazzleHydratedFields,
-      zazzleReferenceValues,
-    };
-    return sortedRows.findIndex((row) => computeRowWarningPriority(row, opts) > 0);
-  }, [sortedRows, tableColumns, summary, contentWarnings, zazzleHydratedFields, zazzleReferenceValues]);
+    return sortedRows.findIndex((row) => (rowPriorities.get(row._id) ?? 0) > 0);
+  }, [hasData, sortedRows, rowPriorities]);
 
   const filteredRows = useMemo(() => {
     if (activeFilter === 'total') return sortedRows;
@@ -326,16 +357,28 @@ export default function CsvUpload({ rows, onChange, onReadinessChange, onSelecti
     });
   }, [sortedRows, activeFilter, tableColumns, summary, contentWarnings, checkedRowIds]);
 
-  const selectedRowsList = rows.filter((r) => checkedRowIds.has(r._id));
-  const selectedDataComplete = selectedRowsList.length > 0 && selectedRowsList.every(
-    (row) => tableColumns.every((col) => !!row[col]?.trim()),
+  const selectedRowsList = useMemo(
+    () => rows.filter((r) => checkedRowIds.has(r._id)),
+    [rows, checkedRowIds],
   );
-  const selectedIdsValid =
-    selectedRowsList.length > 0 &&
-    selectedRowsList.every((r) => validationStatus[r._id] !== undefined) &&
-    selectedRowsList.every((r) => validationStatus[r._id] === 'valid');
-  const selectedHasDuplicates = selectedRowsList.some(
-    (r) => summary.duplicateProductIdRowIds.has(r._id) || summary.duplicateSlugRowIds.has(r._id),
+  const selectedDataComplete = useMemo(
+    () => selectedRowsList.length > 0 && selectedRowsList.every(
+      (row) => tableColumns.every((col) => !!row[col]?.trim()),
+    ),
+    [selectedRowsList, tableColumns],
+  );
+  const selectedIdsValid = useMemo(
+    () =>
+      selectedRowsList.length > 0 &&
+      selectedRowsList.every((r) => validationStatus[r._id] !== undefined) &&
+      selectedRowsList.every((r) => validationStatus[r._id] === 'valid'),
+    [selectedRowsList, validationStatus],
+  );
+  const selectedHasDuplicates = useMemo(
+    () => selectedRowsList.some(
+      (r) => summary.duplicateProductIdRowIds.has(r._id) || summary.duplicateSlugRowIds.has(r._id),
+    ),
+    [selectedRowsList, summary],
   );
 
   useEffect(() => {
@@ -378,6 +421,34 @@ export default function CsvUpload({ rows, onChange, onReadinessChange, onSelecti
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showExportMenu]);
+
+  // Stable callbacks (functional setState, so `[]` deps) — required for React.memo on DataTable/
+  // DataRow to actually skip unchanged rows. Without these, a fresh function each render would
+  // defeat the memoization.
+  const onToggleDiffCell = useCallback(
+    (key: string) => setExpandedDiffCells((prev) => ({ ...prev, [key]: !prev[key] })),
+    [],
+  );
+  const onToggleCheck = useCallback(
+    (id: string) =>
+      setCheckedRowIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+    [],
+  );
+  const onToggleAll = useCallback(
+    (ids: string[], allChecked: boolean) =>
+      setCheckedRowIds((prev) => {
+        const next = new Set(prev);
+        if (allChecked) ids.forEach((id) => next.delete(id));
+        else ids.forEach((id) => next.add(id));
+        return next;
+      }),
+    [],
+  );
 
   async function handleHydrate() {
     setHydrating(true);
@@ -868,32 +939,18 @@ export default function CsvUpload({ rows, onChange, onReadinessChange, onSelecti
         zazzleHydratedFields={zazzleHydratedFields}
         zazzleReferenceValues={zazzleReferenceValues}
         expandedDiffCells={expandedDiffCells}
-        onToggleDiffCell={(key) => setExpandedDiffCells((prev) => ({ ...prev, [key]: !prev[key] }))}
+        onToggleDiffCell={onToggleDiffCell}
         contentWarnings={contentWarnings}
         firstWarningIndex={activeFilter === 'total' ? firstWarningIndex : -1}
         checkedRowIds={checkedRowIds}
-        onToggleCheck={(id) =>
-          setCheckedRowIds((prev) => {
-            const next = new Set(prev);
-            if (next.has(id)) next.delete(id);
-            else next.add(id);
-            return next;
-          })
-        }
-        onToggleAll={(ids, allChecked) =>
-          setCheckedRowIds((prev) => {
-            const next = new Set(prev);
-            if (allChecked) ids.forEach((id) => next.delete(id));
-            else ids.forEach((id) => next.add(id));
-            return next;
-          })
-        }
+        onToggleCheck={onToggleCheck}
+        onToggleAll={onToggleAll}
       />
     </div>
   );
 }
 
-function DataTable({
+const DataTable = memo(function DataTable({
   columns,
   rows,
   placeholder,
@@ -926,179 +983,287 @@ function DataTable({
   onToggleCheck?: (id: string) => void;
   onToggleAll?: (ids: string[], allCurrentlyChecked: boolean) => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const showApiCol = Object.keys(validationStatus).length > 0 || Object.keys(zazzleReferenceValues).length > 0;
+
+  // One grid template shared by the sticky header and every row so columns line up while the body
+  // is virtualized (rows are absolutely positioned). Widths are fixed px (see COL_WIDTH), so the
+  // grid scrolls horizontally instead of squashing.
+  const { gridTemplate, totalWidth } = useMemo(() => {
+    const widths = [CHECKBOX_W, INDEX_W, ...columns.map(colWidth), ...(showApiCol ? [API_W] : [])];
+    return {
+      gridTemplate: widths.map((w) => `${w}px`).join(' '),
+      totalWidth: widths.reduce((a, b) => a + b, 0),
+    };
+  }, [columns, showApiCol]);
+
   const nonPlaceholderRows = placeholder ? [] : rows.filter((r) => r._id !== 'placeholder');
   const allVisibleChecked = nonPlaceholderRows.length > 0 && nonPlaceholderRows.every((r) => checkedRowIds.has(r._id));
   const someVisibleChecked = nonPlaceholderRows.some((r) => checkedRowIds.has(r._id));
 
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 37,
+    overscan: 10,
+    getItemKey: (index) => rows[index]._id,
+  });
+
   return (
-    <div className={`overflow-auto rounded-xl border border-gray-200 max-h-[420px] ${placeholder ? 'opacity-40' : ''}`}>
-      <table className="text-xs w-full min-w-max">
-        <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
-          <tr className="border-l-2 border-l-gray-50">
-            <th className="px-3 py-2 w-[40px] text-center">
-              {!placeholder && (
-                <input
-                  type="checkbox"
-                  checked={allVisibleChecked}
-                  ref={(el) => { if (el) el.indeterminate = someVisibleChecked && !allVisibleChecked; }}
-                  onChange={() => onToggleAll?.(nonPlaceholderRows.map((r) => r._id), allVisibleChecked)}
-                  className="cursor-pointer accent-indigo-600"
-                />
-              )}
-            </th>
-            <th className="px-3 py-2 text-left font-medium text-gray-400 whitespace-nowrap w-[40px]">#</th>
-            {columns.map((col) => (
-              <th key={col} className="px-3 py-2 text-left font-medium text-gray-600 whitespace-nowrap">
-                {col}
-              </th>
-            ))}
-            {(Object.keys(validationStatus).length > 0 || Object.keys(zazzleReferenceValues).length > 0) && (
-              <th className="px-3 py-2 text-left font-medium text-gray-600 whitespace-nowrap w-[40px]">API</th>
+    <div
+      ref={scrollRef}
+      className={`overflow-auto rounded-xl border border-gray-200 max-h-[420px] text-xs ${placeholder ? 'opacity-40' : ''}`}
+    >
+      <div style={{ width: totalWidth, minWidth: '100%' }}>
+        {/* Sticky header — same grid template as the rows so columns stay aligned */}
+        <div
+          className="grid bg-gray-50 border-b border-gray-200 sticky top-0 z-10 border-l-2 border-l-gray-50"
+          style={{ gridTemplateColumns: gridTemplate }}
+        >
+          <div className="px-3 py-2 text-center">
+            {!placeholder && (
+              <input
+                type="checkbox"
+                checked={allVisibleChecked}
+                ref={(el) => { if (el) el.indeterminate = someVisibleChecked && !allVisibleChecked; }}
+                onChange={() => onToggleAll?.(nonPlaceholderRows.map((r) => r._id), allVisibleChecked)}
+                className="cursor-pointer accent-indigo-600"
+              />
             )}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row, index) => {
-            const status = validationStatus[row._id];
-            const isProductIdDup = duplicateProductIdRowIds.has(row._id);
-            const isSlugDup = duplicateSlugRowIds.has(row._id);
-            const isDup = isProductIdDup || isSlugDup;
-            const rowHasAnyWarning = computeRowHasWarning(row, {
-              tableColumns: columns,
-              duplicateProductIdRowIds,
-              duplicateSlugRowIds,
-              contentWarnings,
-              zazzleHydratedFields,
-              zazzleReferenceValues,
-            });
-            const borderClass = isDup              ? 'border-l-orange-400' :
-              status === 'invalid'                 ? 'border-l-red-400'    :
-              rowHasAnyWarning                     ? 'border-l-yellow-400' :
-              status === 'valid'                   ? 'border-l-green-400'  :
-                                                     'border-l-transparent';
-            const isSectionBoundary = index === firstWarningIndex && firstWarningIndex > 0;
+          </div>
+          <div className="px-3 py-2 text-left font-medium text-gray-400">#</div>
+          {columns.map((col) => (
+            <div key={col} className="px-3 py-2 text-left font-medium text-gray-600 truncate">
+              {col}
+            </div>
+          ))}
+          {showApiCol && (
+            <div className="px-3 py-2 text-left font-medium text-gray-600">API</div>
+          )}
+        </div>
+
+        {/* Virtualized body — only the visible window of rows is mounted */}
+        <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+          {virtualizer.getVirtualItems().map((vi) => {
+            const row = rows[vi.index];
             return (
-              <tr
-                key={row._id}
-                className={`border-b border-gray-100 last:border-b-0 border-l-2 ${borderClass}${isSectionBoundary ? ' border-t-4 border-t-gray-300' : ''}`}
-              >
-                <td className="px-3 py-2 w-[40px] text-center">
-                  {!placeholder && (
-                    <input
-                      type="checkbox"
-                      checked={checkedRowIds.has(row._id)}
-                      onChange={() => onToggleCheck?.(row._id)}
-                      className="cursor-pointer accent-indigo-600"
-                    />
-                  )}
-                </td>
-                <td className="px-3 py-2 text-gray-400 whitespace-nowrap w-[40px]">
-                  {placeholder ? '—' : parseInt(row._id) + 1}
-                </td>
-                {columns.map((col) => {
-                  const isEmpty = !placeholder && !row[col]?.trim();
-                  const isHydrated = !placeholder && (zazzleHydratedFields[row._id]?.includes(col) ?? false);
-                  const isTitleCol = col === 'title' || col === 'short_title';
-                  const isDescCol = col === 'description';
-                  const zazzleRef = (isTitleCol || isDescCol)
-                    ? (isTitleCol ? zazzleReferenceValues[row._id]?.title : zazzleReferenceValues[row._id]?.description)
-                    : undefined;
-                  const hasComparison = !isHydrated && !!zazzleRef && !!row[col]?.trim();
-                  const valuesMatch = hasComparison && row[col]?.trim() === zazzleRef?.trim();
-                  const diffKey = `${row._id}-${col}`;
-                  const isDiffExpanded = expandedDiffCells[diffKey] ?? false;
-                  const cellWarnings = contentWarnings[row._id]?.[col] ?? [];
-                  const hasContentWarning = cellWarnings.length > 0;
-                  const cellClass = isHydrated
-                    ? 'bg-purple-50 text-purple-700'
-                    : isEmpty
-                      ? 'bg-red-50 text-red-400 italic'
-                      : hasContentWarning
-                        ? 'bg-yellow-50 text-yellow-800'
-                        : 'text-gray-700';
-                  return (
-                    <td key={col} className={`px-3 py-2 ${cellClass}`}>
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-1">
-                          {col === 'product_id' && isProductIdDup && (
-                            <span className="relative group shrink-0 cursor-help text-orange-500">
-                              <DuplicateIcon />
-                              <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-36 rounded bg-gray-800 px-2 py-1.5 text-sm leading-snug text-white shadow-lg group-hover:block whitespace-normal">
-                                Duplicate product ID
-                              </span>
-                            </span>
-                          )}
-                          {col === 'product_id' && status && (
-                            <span className={`shrink-0 font-bold ${status === 'valid' ? 'text-green-500' : 'text-red-500'}`}>
-                              {status === 'valid' ? '✓' : '✗'}
-                            </span>
-                          )}
-                          {col === 'url_slug' && isSlugDup && (
-                            <span className="relative group shrink-0 cursor-help text-orange-500">
-                              <DuplicateIcon />
-                              <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-36 rounded bg-gray-800 px-2 py-1.5 text-sm leading-snug text-white shadow-lg group-hover:block whitespace-normal">
-                                Duplicate URL slug
-                              </span>
-                            </span>
-                          )}
-                          {hasContentWarning && (
-                            <span className="relative group shrink-0 cursor-help text-yellow-600">
-                              ⚠
-                              <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-56 rounded bg-gray-800 px-2 py-1.5 text-sm leading-snug text-white shadow-lg group-hover:block whitespace-normal">
-                                {cellWarnings.map((w) => CONTENT_WARNING_LABELS[w]).join(' · ')}
-                              </span>
-                            </span>
-                          )}
-                          {hasComparison && valuesMatch && (
-                            <span className="shrink-0 text-green-500 font-bold" title="Matches Zazzle data">✓</span>
-                          )}
-                          {hasComparison && !valuesMatch && (
-                            <button
-                              type="button"
-                              onClick={() => onToggleDiffCell?.(diffKey)}
-                              className="shrink-0 flex items-center gap-0.5 font-medium text-amber-600 hover:text-amber-800 cursor-pointer"
-                              title="Differs from Zazzle — click to see Zazzle's value"
-                            >
-                              <span>⚠</span>
-                              <span className="text-xs leading-none">{isDiffExpanded ? '▲' : '▼'}</span>
-                            </button>
-                          )}
-                          <div className="overflow-x-auto whitespace-nowrap min-w-0 flex-1">
-                            {isEmpty ? '—' : (row[col] ?? '')}
-                          </div>
-                        </div>
-                        {hasComparison && !valuesMatch && isDiffExpanded && (
-                          <div className="mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 whitespace-normal">
-                            <span className="font-medium">Zazzle: </span>{zazzleRef}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  );
-                })}
-                {(Object.keys(validationStatus).length > 0 || Object.keys(zazzleReferenceValues).length > 0) && (
-                  <td className="px-3 py-2 text-center">
-                    {row.product_id?.trim() && (
-                      <a
-                        href={`https://www.zazzle.com/svc/partner/adobeexpress/v1/getproductfromtemplate?templateId=${encodeURIComponent(row.product_id.trim())}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-500 hover:text-blue-700 inline-flex items-center justify-center"
-                        title="View raw Zazzle API response"
-                      >
-                        <ExternalLinkIcon />
-                      </a>
-                    )}
-                  </td>
-                )}
-              </tr>
+              <DataRow
+                key={vi.key}
+                dataIndex={vi.index}
+                start={vi.start}
+                measureRef={virtualizer.measureElement}
+                row={row}
+                columns={columns}
+                placeholder={placeholder}
+                gridTemplate={gridTemplate}
+                showApiCol={showApiCol}
+                firstWarningIndex={firstWarningIndex}
+                isChecked={checkedRowIds.has(row._id)}
+                validationStatus={validationStatus}
+                duplicateProductIdRowIds={duplicateProductIdRowIds}
+                duplicateSlugRowIds={duplicateSlugRowIds}
+                contentWarnings={contentWarnings}
+                zazzleHydratedFields={zazzleHydratedFields}
+                zazzleReferenceValues={zazzleReferenceValues}
+                expandedDiffCells={expandedDiffCells}
+                onToggleCheck={onToggleCheck}
+                onToggleDiffCell={onToggleDiffCell}
+              />
             );
           })}
-        </tbody>
-      </table>
+        </div>
+      </div>
     </div>
   );
+});
+
+interface DataRowProps {
+  row: CsvRow;
+  columns: string[];
+  placeholder: boolean;
+  gridTemplate: string;
+  showApiCol: boolean;
+  dataIndex: number;
+  start: number;
+  measureRef: (el: HTMLElement | null) => void;
+  firstWarningIndex: number;
+  isChecked: boolean;
+  validationStatus: Record<string, 'valid' | 'invalid'>;
+  duplicateProductIdRowIds: Set<string>;
+  duplicateSlugRowIds: Set<string>;
+  contentWarnings: ContentWarnings;
+  zazzleHydratedFields: Record<string, string[]>;
+  zazzleReferenceValues: Record<string, { title?: string; description?: string }>;
+  expandedDiffCells: Record<string, boolean>;
+  onToggleCheck?: (id: string) => void;
+  onToggleDiffCell?: (key: string) => void;
 }
+
+const DataRow = memo(function DataRow({
+  row,
+  columns,
+  placeholder,
+  gridTemplate,
+  showApiCol,
+  dataIndex,
+  start,
+  measureRef,
+  firstWarningIndex,
+  isChecked,
+  validationStatus,
+  duplicateProductIdRowIds,
+  duplicateSlugRowIds,
+  contentWarnings,
+  zazzleHydratedFields,
+  zazzleReferenceValues,
+  expandedDiffCells,
+  onToggleCheck,
+  onToggleDiffCell,
+}: DataRowProps) {
+  const status = validationStatus[row._id];
+  const isProductIdDup = duplicateProductIdRowIds.has(row._id);
+  const isSlugDup = duplicateSlugRowIds.has(row._id);
+  const isDup = isProductIdDup || isSlugDup;
+  const rowHasAnyWarning = computeRowHasWarning(row, {
+    tableColumns: columns,
+    duplicateProductIdRowIds,
+    duplicateSlugRowIds,
+    contentWarnings,
+    zazzleHydratedFields,
+    zazzleReferenceValues,
+  });
+  const borderClass = isDup              ? 'border-l-orange-400' :
+    status === 'invalid'                 ? 'border-l-red-400'    :
+    rowHasAnyWarning                     ? 'border-l-yellow-400' :
+    status === 'valid'                   ? 'border-l-green-400'  :
+                                           'border-l-transparent';
+  const isSectionBoundary = dataIndex === firstWarningIndex && firstWarningIndex > 0;
+  return (
+    <div
+      data-index={dataIndex}
+      ref={measureRef}
+      className={`grid items-start border-b border-gray-100 border-l-2 ${borderClass}${isSectionBoundary ? ' border-t-4 border-t-gray-300' : ''}`}
+      style={{
+        gridTemplateColumns: gridTemplate,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        transform: `translateY(${start}px)`,
+      }}
+    >
+      <div className="px-3 py-2 text-center">
+        {!placeholder && (
+          <input
+            type="checkbox"
+            checked={isChecked}
+            onChange={() => onToggleCheck?.(row._id)}
+            className="cursor-pointer accent-indigo-600"
+          />
+        )}
+      </div>
+      <div className="px-3 py-2 text-gray-400 whitespace-nowrap">
+        {placeholder ? '—' : parseInt(row._id) + 1}
+      </div>
+      {columns.map((col) => {
+        const isEmpty = !placeholder && !row[col]?.trim();
+        const isHydrated = !placeholder && (zazzleHydratedFields[row._id]?.includes(col) ?? false);
+        const isTitleCol = col === 'title' || col === 'short_title';
+        const isDescCol = col === 'description';
+        const zazzleRef = (isTitleCol || isDescCol)
+          ? (isTitleCol ? zazzleReferenceValues[row._id]?.title : zazzleReferenceValues[row._id]?.description)
+          : undefined;
+        const hasComparison = !isHydrated && !!zazzleRef && !!row[col]?.trim();
+        const valuesMatch = hasComparison && row[col]?.trim() === zazzleRef?.trim();
+        const diffKey = `${row._id}-${col}`;
+        const isDiffExpanded = expandedDiffCells[diffKey] ?? false;
+        const cellWarnings = contentWarnings[row._id]?.[col] ?? [];
+        const hasContentWarning = cellWarnings.length > 0;
+        const cellClass = isHydrated
+          ? 'bg-purple-50 text-purple-700'
+          : isEmpty
+            ? 'bg-red-50 text-red-400 italic'
+            : hasContentWarning
+              ? 'bg-yellow-50 text-yellow-800'
+              : 'text-gray-700';
+        return (
+          <div key={col} className={`px-3 py-2 min-w-0 ${cellClass}`}>
+            <div className="flex flex-col">
+              <div className="flex items-center gap-1">
+                {col === 'product_id' && isProductIdDup && (
+                  <span className="relative group shrink-0 cursor-help text-orange-500">
+                    <DuplicateIcon />
+                    <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-36 rounded bg-gray-800 px-2 py-1.5 text-sm leading-snug text-white shadow-lg group-hover:block whitespace-normal">
+                      Duplicate product ID
+                    </span>
+                  </span>
+                )}
+                {col === 'product_id' && status && (
+                  <span className={`shrink-0 font-bold ${status === 'valid' ? 'text-green-500' : 'text-red-500'}`}>
+                    {status === 'valid' ? '✓' : '✗'}
+                  </span>
+                )}
+                {col === 'url_slug' && isSlugDup && (
+                  <span className="relative group shrink-0 cursor-help text-orange-500">
+                    <DuplicateIcon />
+                    <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-36 rounded bg-gray-800 px-2 py-1.5 text-sm leading-snug text-white shadow-lg group-hover:block whitespace-normal">
+                      Duplicate URL slug
+                    </span>
+                  </span>
+                )}
+                {hasContentWarning && (
+                  <span className="relative group shrink-0 cursor-help text-yellow-600">
+                    ⚠
+                    <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden w-56 rounded bg-gray-800 px-2 py-1.5 text-sm leading-snug text-white shadow-lg group-hover:block whitespace-normal">
+                      {cellWarnings.map((w) => CONTENT_WARNING_LABELS[w]).join(' · ')}
+                    </span>
+                  </span>
+                )}
+                {hasComparison && valuesMatch && (
+                  <span className="shrink-0 text-green-500 font-bold" title="Matches Zazzle data">✓</span>
+                )}
+                {hasComparison && !valuesMatch && (
+                  <button
+                    type="button"
+                    onClick={() => onToggleDiffCell?.(diffKey)}
+                    className="shrink-0 flex items-center gap-0.5 font-medium text-amber-600 hover:text-amber-800 cursor-pointer"
+                    title="Differs from Zazzle — click to see Zazzle's value"
+                  >
+                    <span>⚠</span>
+                    <span className="text-xs leading-none">{isDiffExpanded ? '▲' : '▼'}</span>
+                  </button>
+                )}
+                <div className="overflow-x-auto whitespace-nowrap min-w-0 flex-1">
+                  {isEmpty ? '—' : (row[col] ?? '')}
+                </div>
+              </div>
+              {hasComparison && !valuesMatch && isDiffExpanded && (
+                <div className="mt-1 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 whitespace-normal">
+                  <span className="font-medium">Zazzle: </span>{zazzleRef}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+      {showApiCol && (
+        <div className="px-3 py-2 text-center">
+          {row.product_id?.trim() && (
+            <a
+              href={`https://www.zazzle.com/svc/partner/adobeexpress/v1/getproductfromtemplate?templateId=${encodeURIComponent(row.product_id.trim())}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-500 hover:text-blue-700 inline-flex items-center justify-center"
+              title="View raw Zazzle API response"
+            >
+              <ExternalLinkIcon />
+            </a>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
 
 function ZazzleLegend({ showContentWarning = false }: { showContentWarning?: boolean }) {
   return (
