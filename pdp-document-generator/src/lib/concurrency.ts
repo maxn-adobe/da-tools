@@ -1,5 +1,11 @@
 export const DEFAULT_CONCURRENCY = 3;
 
+// Generate step (template fetch → build → write to DA source). Bumped above DEFAULT_CONCURRENCY:
+// DA's source API (admin.da.live) tolerates far more than the AEM admin API, and postDoc/
+// createDocVersion now retry on 429/5xx (fetchWithRetry), so a modest bump won't drop rows on a
+// transient throttle. This is the single knob to tune once Part 2 measures DA write 429 behavior.
+export const GENERATE_CONCURRENCY = 6;
+
 // Higher bound for the Document Manager scan (crawl + per-doc source fetch). Tunable:
 // peak in-flight ≈ CRAWL_CONCURRENCY + STATUS_CONCURRENCY while fetch and status overlap.
 export const CRAWL_CONCURRENCY = 6;

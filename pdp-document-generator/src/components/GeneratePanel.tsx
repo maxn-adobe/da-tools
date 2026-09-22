@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, Fragment } from 'react';
 import { postDoc, createDocVersion, cat, docExists, listDirDocPaths, daPathToProdUrl } from '../api/daApi';
 import { applyTemplate, rowToOutputPath, runGenerationQa, finalizeGeneratedDoc } from '../lib/generate';
-import { runBatch, DEFAULT_CONCURRENCY, EXISTENCE_CHECK_CONCURRENCY } from '../lib/concurrency';
-import { useDaDocumentActions } from '../hooks/useDaDocumentActions';
+import { runBatch, DEFAULT_CONCURRENCY, EXISTENCE_CHECK_CONCURRENCY, GENERATE_CONCURRENCY } from '../lib/concurrency';
+import { useDaDocumentActions, type BulkProgressOp, type PublishQaConfig } from '../hooks/useDaDocumentActions';
 import ConfirmModal from './ConfirmModal';
 import {
   GeneratePill,
@@ -23,8 +23,6 @@ interface Props {
   generateBlockReason?: string;
   onResultsChange?: (hasResults: boolean) => void;
 }
-
-const CONCURRENCY = DEFAULT_CONCURRENCY;
 
 // Stages at which the source document exists in DA (i.e. a document link is valid).
 const DOC_EXISTS_STAGES: ReadonlySet<RowStage> = new Set<RowStage>([
@@ -47,9 +45,13 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
   const [includeDuplicates, setIncludeDuplicates] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ op: BulkProgressOp; done: number; total: number } | null>(null);
+  const [publishQaMode, setPublishQaMode] = useState<PublishQaConfig>({ mode: 'off' });
 
   const actions = useDaDocumentActions<RowResult>(setResults, {
     afterDelete: (r) => ({ id: r.id, path: r.path, stage: 'pending' }),
+    onBulkProgress: (op, done, total) => setBulkProgress({ op, done, total }),
+    publishQaConfig: publishQaMode,
   });
 
   const previewRows = results.length === 0
@@ -288,7 +290,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
       }
     }
 
-    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(GENERATE_CONCURRENCY, queue.length) }, worker));
     setBulkOp('idle');
   }
 
@@ -347,6 +349,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
     setBulkOp('previewing');
     await actions.previewBulk(targets);
     setBulkOp('idle');
+    setBulkProgress(null);
   }
 
   async function handlePublish() {
@@ -356,6 +359,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
     setBulkOp('publishing');
     await actions.publishBulk(targets);
     setBulkOp('idle');
+    setBulkProgress(null);
   }
 
   async function handleUnpublish() {
@@ -363,6 +367,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
     setBulkOp('unpublishing');
     await actions.unpublishBulk(targets);
     setBulkOp('idle');
+    setBulkProgress(null);
   }
 
   const showPreviewBtn = !running && counts.previewable > 0;
@@ -420,7 +425,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
 
         {bulkOp === 'previewing' && (
           <span className="text-sm text-indigo-600 font-medium">
-            Previewing… {counts.previewed} / {counts.previewable}
+            Previewing… {bulkProgress ? `${bulkProgress.done} / ${bulkProgress.total}` : '…'}
           </span>
         )}
 
@@ -434,9 +439,27 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
           </button>
         )}
 
+        {showPublishBtn && (
+          <label className="flex items-center gap-1.5 text-xs text-gray-600" title="Run page QA on published pages after publish. Sampling avoids fetching every live page at scale.">
+            QA
+            <select
+              value={publishQaMode.mode}
+              onChange={(e) => {
+                const m = e.target.value as PublishQaConfig['mode'];
+                setPublishQaMode(m === 'sample' ? { mode: 'sample', sampleSize: 10 } : { mode: m });
+              }}
+              className="h-7 px-1.5 border border-gray-300 rounded-lg text-xs cursor-pointer"
+            >
+              <option value="off">Off</option>
+              <option value="sample">Sample 10</option>
+              <option value="all">All</option>
+            </select>
+          </label>
+        )}
+
         {bulkOp === 'publishing' && (
           <span className="text-sm text-green-600 font-medium">
-            Publishing… {counts.published} / {counts.publishable}
+            Publishing… {bulkProgress ? `${bulkProgress.done} / ${bulkProgress.total}` : '…'}
           </span>
         )}
 
@@ -452,7 +475,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
 
         {bulkOp === 'unpublishing' && (
           <span className="text-sm text-red-600 font-medium">
-            Unpublishing… {counts.unpublished} / {results.filter((r) => r.stage === 'unpublishing' || r.stage === 'unpublished').length}
+            Unpublishing… {bulkProgress ? `${bulkProgress.done} / ${bulkProgress.total}` : '…'}
           </span>
         )}
 

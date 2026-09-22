@@ -4,7 +4,7 @@ import { checkGmcStatus } from '../lib/gmcSubmit';
 import { getToken } from '../api/daApi';
 import type { CrawlError, DocFetchError } from '../api/crawl';
 import type { EditableFieldKey } from '../lib/generate';
-import { useDaDocumentActions } from '../hooks/useDaDocumentActions';
+import { useDaDocumentActions, type BulkProgressOp } from '../hooks/useDaDocumentActions';
 import { daPathToPreviewUrl, daPathToLiveUrl, daPathToProdUrl } from '../api/daApi';
 import { useBeforeUnload } from '../hooks/useBeforeUnload';
 import ConfirmModal from './ConfirmModal';
@@ -65,6 +65,7 @@ export default function DocumentManagerTab() {
   const [confirmOp, setConfirmOp] = useState<BulkConfirmOp | null>(null);
   const [fieldEditModalOpen, setFieldEditModalOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ op: BulkProgressOp; done: number; total: number } | null>(null);
   const [dismissedErrors, setDismissedErrors] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
   const [gmcDialogOpen, setGmcDialogOpen] = useState(false);
@@ -86,7 +87,10 @@ export default function DocumentManagerTab() {
   const [scanProgress, setScanProgress] = useState<{ phase: ScanPhase; done: number; total: number } | null>(null);
   const scanning = scanProgress !== null;
 
-  const actions = useDaDocumentActions<ManagedDoc>(setDocs, { afterDelete: () => undefined });
+  const actions = useDaDocumentActions<ManagedDoc>(setDocs, {
+    afterDelete: () => undefined,
+    onBulkProgress: (op, done, total) => setBulkProgress({ op, done, total }),
+  });
 
   // Strict single-operation lock: while any long op runs (scan, doc-info load, status recheck, or a
   // bulk/GMC action), every trigger is disabled so two operations can never overlap.
@@ -291,6 +295,7 @@ export default function DocumentManagerTab() {
       await fn();
     } finally {
       setBusy(false);
+      setBulkProgress(null);
       setSelected(new Set());
     }
   }
@@ -484,6 +489,18 @@ export default function DocumentManagerTab() {
       )}
 
       {scanning && scanProgress && <ScanProgressBar progress={scanProgress} />}
+
+      {busy && bulkProgress && (
+        <div className="flex items-center gap-2 text-sm text-gray-600">
+          <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+          </svg>
+          <span>
+            {bulkProgress.op === 'previewing' ? 'Previewing' : bulkProgress.op === 'publishing' ? 'Publishing' : 'Unpublishing'}… {bulkProgress.done} / {bulkProgress.total}
+          </span>
+        </div>
+      )}
 
       {crawlErrors.length > 0 && !dismissedErrors && (
         <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-sm text-amber-800">
