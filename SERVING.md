@@ -14,7 +14,7 @@ The repo root serves a landing page; each tool is served at its own subfolder pa
 | `block-signature-migrator` | https://da.live/app/maxn-adobe/da-tools/block-signature-migrator/dist/index | https://main--da-tools--maxn-adobe.aem.live/block-signature-migrator/dist/index.html |
 | `block-finder` (static) | https://da.live/app/maxn-adobe/da-tools/block-finder/index | https://main--da-tools--maxn-adobe.aem.live/block-finder/index.html |
 | `document-counter` (static) | https://da.live/app/maxn-adobe/da-tools/document-counter/index | https://main--da-tools--maxn-adobe.aem.live/document-counter/index.html |
-| `block-index` (static) | https://da.live/app/maxn-adobe/da-tools/block-index/index | https://main--da-tools--maxn-adobe.aem.live/block-index/index.html |
+| `block-index` | https://da.live/app/maxn-adobe/da-tools/block-index/dist/index | https://main--da-tools--maxn-adobe.aem.live/block-index/dist/index.html |
 | `github-package-comparator` (static) | https://da.live/app/maxn-adobe/da-tools/github-package-comparator/index | https://main--da-tools--maxn-adobe.aem.live/github-package-comparator/index.html |
 
 Append `?ref=<branch>` to the da.live URL (or use `<branch>--da-tools--maxn-adobe.aem.live` for the direct URL) to view a non-`main` branch.
@@ -43,7 +43,7 @@ Some tools need no framework and are served **directly from their own folder** �
 
 - `<tool>/index.html` — hand-authored entry, served at `<tool>/index` (e.g. `block-finder/index.html` → `…/da-tools/block-finder/index`).
 - `<tool>/index.js` — a plain browser ES module loaded via `<script type="module" src="./index.js">`; it pulls the DA SDK with `import DA_SDK from 'https://da.live/nx/utils/sdk.js'` (the same auth-token handshake the Vite tools use).
-- All internal links are **relative** (`./…`, `../…`), so these tools need no `base` and can be relocated as a group. `block-finder/`, `document-counter/`, and `block-index/` also share `../shared/da-api.js` and link back to the home page via `../index.html`.
+- All internal links are **relative** (`./…`, `../…`), so these tools need no `base` and can be relocated as a group. `block-finder/` and `document-counter/` also share `../shared/da-api.js` and link back to the home page via `../index.html`.
 
 The repo-root `index.html` landing page is itself such a static file — served at `…/da-tools/index`.
 

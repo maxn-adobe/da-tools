@@ -12,11 +12,11 @@ Open the **[DA Tools home](https://da.live/app/maxn-adobe/da-tools/index)** page
 | **DA Document Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`da-document-generator/`](./da-document-generator/) | https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index |
 | **Block Finder** — find every `/express` page that uses a given block | [`block-finder/`](./block-finder/) | https://da.live/app/maxn-adobe/da-tools/block-finder/index |
 | **Document Counter** — count HTML documents under any directory path | [`document-counter/`](./document-counter/) | https://da.live/app/maxn-adobe/da-tools/document-counter/index |
-| **Block Index** — pick a known repo, or add any `adobecom` DA repo by name, and build a full index of every block in use | [`block-index/`](./block-index/) | https://da.live/app/maxn-adobe/da-tools/block-index/index |
+| **Block Index** — pick a known repo, or add any `adobecom` DA repo by name, and build a full index of every block in use | [`block-index/`](./block-index/) | https://da.live/app/maxn-adobe/da-tools/block-index/dist/index |
 | **Block Signature Migrator** — inspect block structure, infer block schemas, audit signature drift | [`block-signature-migrator/`](./block-signature-migrator/) | https://da.live/app/maxn-adobe/da-tools/block-signature-migrator/dist/index |
 | **GitHub Package Comparator** — compare a JSON file (e.g. `package.json`) across GitHub repos | [`github-package-comparator/`](./github-package-comparator/) | https://da.live/app/maxn-adobe/da-tools/github-package-comparator/index |
 
-Block Finder, Document Counter, Block Index, and GitHub Package Comparator are static (no-build) tools served at `<tool>/index`; the others are built Vite apps served at `<tool>/dist/index`. Append `?ref=<branch>` to preview a non-`main` branch, e.g. `…/da-document-generator/dist/index?ref=my-branch`.
+Block Finder, Document Counter, and GitHub Package Comparator are static (no-build) tools served at `<tool>/index`; the others are built Vite apps served at `<tool>/dist/index`. Append `?ref=<branch>` to preview a non-`main` branch, e.g. `…/da-document-generator/dist/index?ref=my-branch`.
 
 ## Repository layout
 
@@ -32,11 +32,12 @@ da-tools/                   (repo)
 ├─ block-signature-migrator/ # inspect block structure + schemas, audit drift   [Vite/React, built]
 │  ├─ src/  index.html  vite.config.js  package.json
 │  └─ dist/{ index.html, assets/ }   # built output (committed)
+├─ block-index/             # index every block in use across any adobecom repo  [Vite/React, built]
+│  ├─ src/  index.html  vite.config.ts  package.json
+│  └─ dist/{ index.html, assets/ }   # built output (committed)
 ├─ block-finder/            # find every /express page using a block            [static, no build]
 │  └─ index.html  index.js
 ├─ document-counter/        # count HTML docs under a directory path            [static, no build]
-│  └─ index.html  index.js
-├─ block-index/             # index every block in use across any adobecom repo  [static, no build]
 │  └─ index.html  index.js
 ├─ github-package-comparator/ # compare package.json across GitHub repos        [static, no build]
 │  └─ index.html  index.js  github-package-comparator.js  *.css
@@ -46,7 +47,7 @@ da-tools/                   (repo)
 └─ README.md
 ```
 
-Each Vite tool is independent: its own `package.json`, `node_modules`, Vite config, and build. There is intentionally **no** root `package.json` — you work inside a tool's folder. The static tools (`block-finder/`, `document-counter/`, `block-index/`) have no build at all — they're hand-authored ES modules that share `shared/da-api.js` and load the DA SDK from `https://da.live/nx/utils/sdk.js` at runtime.
+Each Vite tool is independent: its own `package.json`, `node_modules`, Vite config, and build. There is intentionally **no** root `package.json` — you work inside a tool's folder. The static tools (`block-finder/`, `document-counter/`, `github-package-comparator/`) have no build at all — they're hand-authored ES modules that share `shared/da-api.js` and load the DA SDK from `https://da.live/nx/utils/sdk.js` at runtime.
 
 ## Working on a tool
 
@@ -61,19 +62,13 @@ The built `dist/` is committed because AEM Code Sync serves the repo's files dir
 
 ### Static tools — local dev
 
-The static tools (`block-finder/`, `document-counter/`, `block-index/`, `github-package-comparator/`) have no dev server. Serve the **repo root** with any static server (so each tool's `../shared/*.js` imports resolve) and open the tool's path:
+The static tools (`block-finder/`, `document-counter/`, `github-package-comparator/`) have no dev server. Serve the **repo root** with any static server (so each tool's `../shared/*.js` imports resolve) and open the tool's path:
 
 ```bash
 npx serve -l 8777 .    # or: python3 -m http.server 8777   — run from the repo root
 ```
 
-Then open `http://localhost:8777/block-index/index.html`. Running outside da.live there's no shell to inject a DA auth token, so for token-gated tools (`block-index`) paste one once in the browser devtools console:
-
-```js
-localStorage.setItem('da-dev-token', '<paste a DA token>')
-```
-
-This mirrors the Vite tools' `VITE_DA_TOKEN` — the token is local-only and never committed. Get it from an authenticated da.live session. Without a token, `block-index` shows a "No DA token" message instead of hanging.
+Then open e.g. `http://localhost:8777/block-finder/index.html`. This is fine for UI work, but the DA auth token is only injected when a tool runs embedded in da.live, so token-gated behavior reaches DA only from the da.live app URL — not from a plain local tab. (The Vite tools, including `block-index`, instead take a local token via `VITE_DA_TOKEN`; see each tool's README.)
 
 ## Adding a new tool
 
