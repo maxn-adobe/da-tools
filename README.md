@@ -12,7 +12,7 @@ Open the **[DA Tools home](https://da.live/app/maxn-adobe/da-tools/index)** page
 | **DA Document Generator** — fill a template's `{{tokens}}` from any spreadsheet/JSON | [`da-document-generator/`](./da-document-generator/) | https://da.live/app/maxn-adobe/da-tools/da-document-generator/dist/index |
 | **Block Finder** — find every `/express` page that uses a given block | [`block-finder/`](./block-finder/) | https://da.live/app/maxn-adobe/da-tools/block-finder/index |
 | **Document Counter** — count HTML documents under any directory path | [`document-counter/`](./document-counter/) | https://da.live/app/maxn-adobe/da-tools/document-counter/index |
-| **Block Index** — pick a repo (da-express-milo or da-dc) and build a full index of every block in use | [`block-index/`](./block-index/) | https://da.live/app/maxn-adobe/da-tools/block-index/index |
+| **Block Index** — pick a known repo, or add any `adobecom` DA repo by name, and build a full index of every block in use | [`block-index/`](./block-index/) | https://da.live/app/maxn-adobe/da-tools/block-index/index |
 | **Block Signature Migrator** — inspect block structure, infer block schemas, audit signature drift | [`block-signature-migrator/`](./block-signature-migrator/) | https://da.live/app/maxn-adobe/da-tools/block-signature-migrator/dist/index |
 | **GitHub Package Comparator** — compare a JSON file (e.g. `package.json`) across GitHub repos | [`github-package-comparator/`](./github-package-comparator/) | https://da.live/app/maxn-adobe/da-tools/github-package-comparator/index |
 
@@ -36,7 +36,7 @@ da-tools/                   (repo)
 │  └─ index.html  index.js
 ├─ document-counter/        # count HTML docs under a directory path            [static, no build]
 │  └─ index.html  index.js
-├─ block-index/             # index every block in the /express tree            [static, no build]
+├─ block-index/             # index every block in use across any adobecom repo  [static, no build]
 │  └─ index.html  index.js
 ├─ github-package-comparator/ # compare package.json across GitHub repos        [static, no build]
 │  └─ index.html  index.js  github-package-comparator.js  *.css
@@ -58,6 +58,22 @@ npm run build                  # compiles to ./dist (commit the result)
 ```
 
 The built `dist/` is committed because AEM Code Sync serves the repo's files directly (there is no CI build step). After `npm run build`, commit the updated `<tool>/dist/` and push — Code Sync mirrors it to the code bus in ~1–2 min.
+
+### Static tools — local dev
+
+The static tools (`block-finder/`, `document-counter/`, `block-index/`, `github-package-comparator/`) have no dev server. Serve the **repo root** with any static server (so each tool's `../shared/*.js` imports resolve) and open the tool's path:
+
+```bash
+npx serve -l 8777 .    # or: python3 -m http.server 8777   — run from the repo root
+```
+
+Then open `http://localhost:8777/block-index/index.html`. Running outside da.live there's no shell to inject a DA auth token, so for token-gated tools (`block-index`) paste one once in the browser devtools console:
+
+```js
+localStorage.setItem('da-dev-token', '<paste a DA token>')
+```
+
+This mirrors the Vite tools' `VITE_DA_TOKEN` — the token is local-only and never committed. Get it from an authenticated da.live session. Without a token, `block-index` shows a "No DA token" message instead of hanging.
 
 ## Adding a new tool
 
