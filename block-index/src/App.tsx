@@ -1,9 +1,7 @@
 import { useMemo, useState } from 'react';
-import type { CSSProperties } from 'react';
 import { getToken } from './api/daApi';
 import { useBlockIndex } from './hooks/useBlockIndex';
 import { computeAppHref } from './lib/appLinks';
-import { SEED_IDS } from './lib/config';
 import { RepoBar } from './components/RepoBar';
 import { RepoForm } from './components/RepoForm';
 import { DirectoryScans } from './components/DirectoryScans';
@@ -18,12 +16,8 @@ export default function App() {
 
   const back = computeAppHref('index', '../../index.html');
 
-  // Per-repo accent, applied as CSS vars on the app root so the results/legend theme by repo.
-  const ownVars = {
-    '--own-color': bi.cfg.ownColor.text,
-    '--own-bg': bi.cfg.ownColor.bg,
-    '--own-border': bi.cfg.ownColor.border,
-  } as CSSProperties;
+  const selectedEntry = bi.registry.get(bi.selectedRepoId);
+  const canManageSelected = bi.canManage(selectedEntry);
 
   const blockCount = useMemo(() => {
     if (!bi.merged) return 0;
@@ -44,7 +38,7 @@ export default function App() {
   }
 
   return (
-    <div style={ownVars}>
+    <>
       <a className="back" href={back.href} target={back.target} data-app-path="index">All Tools</a>
       <h2>Block Index</h2>
 
@@ -61,10 +55,10 @@ export default function App() {
             registry={bi.registry}
             selectedRepoId={bi.selectedRepoId}
             busy={bi.busy}
-            isSeed={SEED_IDS.has(bi.selectedRepoId)}
+            canManage={canManageSelected}
             onSelect={bi.selectRepo}
             onAdd={() => setForm({ mode: 'add', entry: null })}
-            onEdit={() => setForm({ mode: 'edit', entry: bi.registry.get(bi.selectedRepoId) ?? null })}
+            onEdit={() => setForm({ mode: 'edit', entry: selectedEntry ?? null })}
           />
 
           {form && (
@@ -94,6 +88,7 @@ export default function App() {
           <DirectoryScans
             dirs={bi.dirs}
             dirParts={bi.dirParts}
+            dirCounts={bi.dirCounts}
             busy={bi.busy}
             open={bi.dirScansOpen}
             onToggle={bi.setDirScansOpen}
@@ -125,6 +120,6 @@ export default function App() {
           )}
         </>
       )}
-    </div>
+    </>
   );
 }

@@ -5,7 +5,7 @@
 :root {
   --own-color: #fec311;
   --own-bg: rgba(254, 195, 17, 0.1);
-  --own-border: rgba(191, 146, 13, 0.25);
+  --own-border: rgba(254, 195, 17, 0.28);
   --milo-result-border-color: rgba(191, 56, 175, 0.2);
 }
 
@@ -36,6 +36,11 @@ h2 { font-size: 1.5rem; font-weight: 700; margin: 0.83em 0; }
 
 .repo-bar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.85rem; }
 .repo-bar label { font-size: 0.85rem; color: #888; }
+.repo-org { font-size: 0.9rem; color: #999; }
+.repo-bar-right { margin-left: auto; display: flex; align-items: center; gap: 0.6rem; }
+.repo-edit { background: none; border: none; padding: 0; font-size: 0.82rem; color: #888; cursor: pointer; text-decoration: underline; }
+.repo-edit:hover:not(:disabled) { color: #333; }
+.repo-edit:disabled { opacity: 0.5; cursor: default; }
 #repo-select { font-size: 0.9rem; padding: 0.3rem 0.5rem; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333; cursor: pointer; }
 #repo-select:disabled { opacity: 0.6; cursor: default; }
 .repo-action { font-size: 0.82rem; padding: 0.3rem 0.6rem; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #555; cursor: pointer; }
@@ -52,8 +57,9 @@ h2 { font-size: 1.5rem; font-weight: 700; margin: 0.83em 0; }
   max-width: 640px;
 }
 .rf-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.8rem; color: #333; }
-.rf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem 1rem; align-items: end; }
+.rf-fields { display: flex; flex-direction: column; gap: 0.7rem; max-width: 480px; }
 .rf-field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem; color: #777; }
+.rf-org { font-size: 0.88rem; color: #999; white-space: nowrap; align-self: center; }
 .rf-full { grid-column: 1 / -1; }
 .rf-narrow { max-width: 11rem; }
 .rf-hint { color: #aaa; font-weight: 400; }

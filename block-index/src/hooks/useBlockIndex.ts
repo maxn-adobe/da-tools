@@ -1,11 +1,12 @@
 import {
-  useCallback, useEffect, useMemo, useReducer, useState,
+  useCallback, useEffect, useMemo, useReducer, useRef, useState,
 } from 'react';
-import { ls, readJson, writeJson, fetchPublishedPaths } from '../api/daApi';
+import { ls, collectDocs, readJson, writeJson, fetchPublishedPaths } from '../api/daApi';
 import {
   AUDIT_ROOT, DEFAULT_REPO, REPO_STORAGE_KEY, SKIP_DIRS, SEED_IDS,
   deriveConfig, mergeRegistry,
 } from '../lib/config';
+import { getUserEmail } from '../lib/session';
 import { loadRegistry, saveRegistry } from '../lib/registry';
 import {
   fetchRepoBlocks, fetchKitchenSinkBlocks, runScanForDir, mergeAllParts, repoBlocksFromStored,
@@ -13,6 +14,9 @@ import {
 import type {
   RepoEntry, RepoConfig, RepoBlocks, KitchenSinkBlocks, AuditRecord, DirPart, SortKey,
 } from '../types';
+
+// How many never-scanned dirs to count-crawl at once when the Directory Scans panel opens.
+const COUNT_CONCURRENCY = 3;
 
 const emptyRepoBlocks = (): RepoBlocks => ({ own: new Set(), milo: new Set() });
 
@@ -66,6 +70,15 @@ export function useBlockIndex(hasToken: boolean) {
   const [notice, setNotice] = useState('');
   const [sort, setSort] = useState<SortKey>('usage');
   const [dirScansOpen, setDirScansOpen] = useState(false);
+  const [dirCounts, setDirCounts] = useState<Record<string, number | 'counting'>>({});
+
+  // Refs (kept out of effect deps): the current dirParts for the count effect's filtering, and the
+  // set of dirs already counted / in-flight so the effect never recrawls them.
+  const dirPartsRef = useRef(dirParts);
+  dirPartsRef.current = dirParts;
+  const countedRef = useRef<Set<string>>(new Set());
+
+  const currentEmail = getUserEmail();
 
   const cfg = useMemo(
     () => deriveConfig(registry.get(selectedRepoId) ?? registry.get(DEFAULT_REPO)!),
@@ -104,6 +117,8 @@ export function useBlockIndex(hasToken: boolean) {
       setDirs([]);
       setRepoBlocks(emptyRepoBlocks());
       setKsb(null);
+      setDirCounts({});
+      countedRef.current = new Set();
 
       const [rootItems, rb, ksb] = await Promise.all([
         ls(cfg.scanRoot).catch(() => []),
@@ -149,6 +164,49 @@ export function useBlockIndex(hasToken: boolean) {
     })();
     return () => { cancelled = true; };
   }, [cfg, hasToken, registryLoaded]);
+
+  // Count docs in each never-scanned dir once the Directory Scans panel is open (and the repo has
+  // finished loading). ls-only crawl, concurrency-limited, cached; scanned dirs use their cached
+  // docCount instead. Deps deliberately exclude dirParts/dirCounts (read via refs) so completing a
+  // scan or a count doesn't cancel in-flight crawls.
+  useEffect(() => {
+    if (!dirScansOpen || busy) return undefined;
+    const parts = dirPartsRef.current;
+    const toCount = dirs.filter((d) => parts[d] == null && !countedRef.current.has(d));
+    if (toCount.length === 0) return undefined;
+
+    let cancelled = false;
+    for (const d of toCount) countedRef.current.add(d);
+    setDirCounts((prev) => {
+      const next = { ...prev };
+      for (const d of toCount) next[d] = 'counting';
+      return next;
+    });
+
+    (async () => {
+      for (let i = 0; i < toCount.length && !cancelled; i += COUNT_CONCURRENCY) {
+        const batch = toCount.slice(i, i + COUNT_CONCURRENCY);
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.all(batch.map(async (d) => {
+          try {
+            const docs = await collectDocs(`${cfg.scanRoot}/${d}`);
+            if (!cancelled) setDirCounts((prev) => ({ ...prev, [d]: docs.length }));
+          } catch {
+            countedRef.current.delete(d); // allow a retry on the next open
+            if (!cancelled) {
+              setDirCounts((prev) => {
+                const next = { ...prev };
+                delete next[d];
+                return next;
+              });
+            }
+          }
+        }));
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [dirScansOpen, busy, dirs, cfg]);
 
   const scanOne = useCallback(async (dirName: string) => {
     if (busy) return;
@@ -246,7 +304,9 @@ export function useBlockIndex(hasToken: boolean) {
 
   const saveRepo = useCallback(async (entry: RepoEntry): Promise<void> => {
     const next = new Map(registry);
-    next.set(entry.id, { ...(next.get(entry.id) || {}), ...entry });
+    const prev = next.get(entry.id);
+    // New repos are attributed to the current user (advisory); edits keep the original author.
+    next.set(entry.id, { ...(prev || {}), ...entry, addedBy: prev?.addedBy ?? currentEmail ?? undefined });
     let saveError: string | null = null;
     try {
       await saveRegistry(next);
@@ -259,7 +319,7 @@ export function useBlockIndex(hasToken: boolean) {
     setNotice(saveError
       ? `"${entry.id}" is usable this session, but couldn't be saved to the shared list — you may lack write access to ${AUDIT_ROOT} (${saveError}).`
       : '');
-  }, [registry]);
+  }, [registry, currentEmail]);
 
   const removeRepo = useCallback(async (id: string): Promise<void> => {
     if (SEED_IDS.has(id) || !registry.has(id)) return;
@@ -280,12 +340,22 @@ export function useBlockIndex(hasToken: boolean) {
       : '');
   }, [registry, selectedRepoId]);
 
+  // Advisory ownership check: only the person who added a repo (by email) may edit/remove it; seeds
+  // (no addedBy) are locked for everyone. Client-side only — not a security boundary.
+  const canManage = useCallback(
+    (entry: RepoEntry | undefined) => (
+      !!entry && !SEED_IDS.has(entry.id) && !!entry.addedBy && entry.addedBy === currentEmail
+    ),
+    [currentEmail],
+  );
+
   return {
     registry,
     selectedRepoId,
     cfg,
     dirs,
     dirParts,
+    dirCounts,
     repoBlocks,
     kitchenSinkBlocks,
     busy,
@@ -297,6 +367,8 @@ export function useBlockIndex(hasToken: boolean) {
     publishedSet,
     dirScansOpen,
     setDirScansOpen,
+    currentEmail,
+    canManage,
     selectRepo,
     saveRepo,
     removeRepo,

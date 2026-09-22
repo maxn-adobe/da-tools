@@ -1,14 +1,13 @@
 // Shared types for block-index.
 
 // A minimal registry entry — only the fields that can't be derived from the repo id. Stored in
-// the shared repos.json and expanded by deriveConfig() into a RepoConfig.
+// the shared repos.json and expanded by deriveConfig() into a RepoConfig. `addedBy` is the email of
+// whoever added it (from the da.live SDK), used for advisory edit/remove gating.
 export interface RepoEntry {
   id: string;
-  label?: string;
   blocksPath?: string;
   ref?: string;
-  color?: string;
-  usesMilo?: boolean;
+  addedBy?: string;
 }
 
 export interface KitchenSink {
@@ -22,19 +21,12 @@ export interface Tier {
   kitchenSink: KitchenSink;
 }
 
-export interface OwnColor {
-  text: string;
-  bg: string;
-  border: string;
-}
-
 // The fully-derived config the rest of the tool consumes.
 export interface RepoConfig {
   id: string;
   label: string;
   scanRoot: string;
   auditDir: string;
-  ownColor: OwnColor;
   own: Tier;
   milo: Tier | null;
 }

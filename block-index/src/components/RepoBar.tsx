@@ -4,18 +4,19 @@ interface Props {
   registry: Map<string, RepoEntry>;
   selectedRepoId: string;
   busy: boolean;
-  isSeed: boolean;
+  canManage: boolean;
   onSelect: (id: string) => void;
   onAdd: () => void;
   onEdit: () => void;
 }
 
 export function RepoBar({
-  registry, selectedRepoId, busy, isSeed, onSelect, onAdd, onEdit,
+  registry, selectedRepoId, busy, canManage, onSelect, onAdd, onEdit,
 }: Props) {
   return (
     <div className="repo-bar">
       <label htmlFor="repo-select">Repo</label>
+      <span className="repo-org">adobecom /</span>
       <select
         id="repo-select"
         value={selectedRepoId}
@@ -23,13 +24,17 @@ export function RepoBar({
         onChange={(e) => onSelect(e.target.value)}
       >
         {[...registry.values()].map((entry) => (
-          <option key={entry.id} value={entry.id}>{entry.label || entry.id}</option>
+          <option key={entry.id} value={entry.id}>{entry.id}</option>
         ))}
       </select>
-      <button className="repo-action" type="button" disabled={busy} onClick={onAdd}>+ Add repo</button>
-      <button className="repo-action" type="button" disabled={busy} onClick={onEdit}>
-        {isSeed ? 'Edit' : 'Edit / Remove'}
-      </button>
+      <span className="repo-bar-right">
+        {canManage && (
+          <button className="repo-edit" type="button" disabled={busy} onClick={onEdit}>
+            Edit block path
+          </button>
+        )}
+        <button className="repo-action" type="button" disabled={busy} onClick={onAdd}>+ Add repo</button>
+      </span>
     </div>
   );
 }

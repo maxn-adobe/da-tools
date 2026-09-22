@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { detectRepo } from '../api/github';
 import type { DetectError } from '../api/github';
-import { nextColor, SEED_IDS, ORG } from '../lib/config';
+import { ORG, DEFAULT_REF } from '../lib/config';
 import type { RepoEntry } from '../types';
 
 interface Props {
@@ -24,12 +24,10 @@ const DETECT_ERRORS = (rid: string): Record<DetectError, string> => ({
 export function RepoForm({
   mode, entry, registry, onSave, onRemove, onCancel,
 }: Props) {
+  const isEdit = mode === 'edit';
   const [id, setId] = useState(entry?.id ?? '');
-  const [label, setLabel] = useState(entry?.label ?? '');
   const [blocks, setBlocks] = useState(entry?.blocksPath ?? '');
-  const [ref, setRef] = useState(entry?.ref ?? 'stage');
-  const [color, setColor] = useState(entry?.color ?? nextColor(registry));
-  const [usesMilo, setUsesMilo] = useState(entry ? entry.usesMilo !== false : true);
+  const [ref, setRef] = useState(entry?.ref ?? DEFAULT_REF);
   const [candidates, setCandidates] = useState<string[]>([]);
   const [msg, setMsg] = useState<Msg>(
     mode === 'add' ? { text: 'Enter a repo name, then Detect (or type the blocks path).' } : { text: '' },
@@ -37,26 +35,21 @@ export function RepoForm({
   const [detecting, setDetecting] = useState(false);
   const [removePending, setRemovePending] = useState(false);
 
-  const isEdit = mode === 'edit';
-  const canRemove = isEdit && !!entry && !SEED_IDS.has(entry.id);
+  // In edit mode the repo is fixed to the entry; in add mode it's the typed name.
+  const repoId = isEdit ? (entry?.id ?? '') : id.trim().toLowerCase();
 
   async function handleDetect() {
-    const rid = id.trim().toLowerCase();
-    if (!rid) { setMsg({ text: 'Enter a repo name first.', error: true }); return; }
+    if (!repoId) { setMsg({ text: 'Enter a repo name first.', error: true }); return; }
     setMsg({ text: 'Detecting on GitHub…' });
     setDetecting(true);
     try {
-      const res = await detectRepo(rid);
-      if ('error' in res) {
-        setMsg({ text: DETECT_ERRORS(rid)[res.error], error: true });
-        return;
-      }
+      const res = await detectRepo(repoId);
+      if ('error' in res) { setMsg({ text: DETECT_ERRORS(repoId)[res.error], error: true }); return; }
       setRef(res.ref);
-      if (!label) setLabel(rid);
       if (res.candidates.length === 1) {
         setBlocks(res.candidates[0]);
         setCandidates([]);
-        setMsg({ text: `Found blocks at "${res.candidates[0]}" (branch: ${res.ref}).` });
+        setMsg({ text: `Found blocks at "${res.candidates[0]}".` });
       } else if (res.candidates.length > 1) {
         setCandidates(res.candidates);
         setBlocks(res.candidates[0]);
@@ -76,15 +69,12 @@ export function RepoForm({
   }
 
   function handleSave() {
-    const rid = id.trim().toLowerCase();
     const blocksPath = blocks.trim().replace(/^\/+|\/+$/g, '');
-    if (!rid) { setMsg({ text: 'Repo name is required.', error: true }); return; }
-    if (!/^[a-z0-9._-]+$/.test(rid)) { setMsg({ text: 'Repo name has invalid characters.', error: true }); return; }
+    if (!repoId) { setMsg({ text: 'Repo name is required.', error: true }); return; }
+    if (!isEdit && !/^[a-z0-9._-]+$/.test(repoId)) { setMsg({ text: 'Repo name has invalid characters.', error: true }); return; }
     if (!blocksPath) { setMsg({ text: 'Blocks path is required — use Detect or type it.', error: true }); return; }
-    if (mode === 'add' && registry.has(rid)) { setMsg({ text: `"${rid}" is already in the list.`, error: true }); return; }
-    onSave({
-      id: rid, label: label.trim() || rid, blocksPath, ref: ref.trim() || 'stage', color, usesMilo,
-    });
+    if (mode === 'add' && registry.has(repoId)) { setMsg({ text: `"${repoId}" is already in the list.`, error: true }); return; }
+    onSave({ id: repoId, blocksPath, ref: ref.trim() || DEFAULT_REF });
   }
 
   function handleRemove() {
@@ -103,76 +93,54 @@ export function RepoForm({
 
   return (
     <div id="repo-form">
-      <div className="rf-title">{mode === 'add' ? 'Add a repo' : `Edit ${entry?.id}`}</div>
-      <div className="rf-grid">
+      <div className="rf-title">
+        {mode === 'add' ? 'Add a repo' : `Edit block path — adobecom / ${entry?.id}`}
+      </div>
+      <div className="rf-fields">
+        {!isEdit && (
+          <label className="rf-field">
+            <span>Repo name</span>
+            <span className="rf-inline">
+              <span className="rf-org">adobecom /</span>
+              <input
+                type="text"
+                placeholder="e.g. edu"
+                autoComplete="off"
+                spellCheck={false}
+                value={id}
+                onChange={(e) => setId(e.target.value)}
+              />
+              <button type="button" disabled={detecting} onClick={handleDetect}>Detect</button>
+            </span>
+          </label>
+        )}
         <label className="rf-field">
-          <span>Repo name</span>
+          <span>Blocks path <span className="rf-hint">(within the GitHub repo)</span></span>
           <span className="rf-inline">
             <input
               type="text"
-              placeholder="e.g. edu"
+              placeholder="auto-detected, e.g. edu/blocks"
               autoComplete="off"
               spellCheck={false}
-              value={id}
-              disabled={isEdit}
-              onChange={(e) => setId(e.target.value)}
+              value={blocks}
+              onChange={(e) => setBlocks(e.target.value)}
             />
-            <button type="button" disabled={detecting} onClick={handleDetect}>Detect</button>
+            {isEdit && <button type="button" disabled={detecting} onClick={handleDetect}>Re-detect</button>}
           </span>
         </label>
-        <label className="rf-field">
-          <span>Label</span>
-          <input
-            type="text"
-            placeholder="Display name"
-            autoComplete="off"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-          />
-        </label>
-        <label className="rf-field rf-full">
-          <span>Blocks path <span className="rf-hint">(within the GitHub repo)</span></span>
-          <input
-            type="text"
-            placeholder="auto-detected, e.g. edu/blocks"
-            autoComplete="off"
-            spellCheck={false}
-            value={blocks}
-            onChange={(e) => setBlocks(e.target.value)}
-          />
-        </label>
         {candidates.length > 1 && (
-          <div className="rf-field rf-full">
+          <label className="rf-field">
             <span>Detected block folders</span>
             <select value={blocks} onChange={(e) => setBlocks(e.target.value)}>
               {candidates.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
-          </div>
+          </label>
         )}
-        <label className="rf-field rf-narrow">
-          <span>Branch</span>
-          <input
-            type="text"
-            placeholder="stage"
-            autoComplete="off"
-            spellCheck={false}
-            value={ref}
-            onChange={(e) => setRef(e.target.value)}
-          />
-        </label>
-        <label className="rf-field rf-narrow">
-          <span>Accent color</span>
-          <input type="color" value={color} onChange={(e) => setColor(e.target.value)} />
-        </label>
-        <label className="rf-field rf-check">
-          <input type="checkbox" checked={usesMilo} onChange={(e) => setUsesMilo(e.target.checked)} />
-          <span>Uses milo blocks</span>
-        </label>
       </div>
       <p className={`rf-status${msg.error ? ' error' : ''}`}>{msg.text}</p>
       <div className="rf-actions">
         <button type="button" className="rf-primary" onClick={handleSave}>Save</button>
-        {canRemove && (
+        {isEdit && entry && (
           <button type="button" id="rf-remove" onClick={handleRemove}>
             {removePending ? 'Confirm remove' : 'Remove'}
           </button>

@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { setToken } from './api/daApi';
+import { setUserEmail } from './lib/session';
 import './index.css';
 import App from './App';
 
@@ -12,6 +13,7 @@ async function initToken() {
   const localToken = import.meta.env.VITE_DA_TOKEN;
   if (localToken) {
     setToken(localToken);
+    setUserEmail(null); // no da.live shell locally → no authenticated email
     return;
   }
   try {
@@ -21,16 +23,18 @@ async function initToken() {
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error('SDK load timeout (10s)')), 10000)
       ),
-    ]) as { default: Promise<{ token: string }> };
+    ]) as { default: Promise<{ token: string; email?: string }> };
     const sdkData = await Promise.race([
       DA_SDK.default,
       new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Token retrieval timeout (5s)')), 5000)
       ),
-    ]) as { token: string };
+    ]) as { token: string; email?: string };
     if (sdkData?.token) setToken(sdkData.token);
+    setUserEmail(sdkData?.email ?? null);
   } catch {
     setToken(null);
+    setUserEmail(null);
   }
 }
 
