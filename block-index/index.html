@@ -28,6 +28,54 @@
       .repo-bar label { font-size: 0.85rem; color: #888; }
       #repo-select { font-size: 0.9rem; padding: 0.3rem 0.5rem; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333; cursor: pointer; }
       #repo-select:disabled { opacity: 0.6; cursor: default; }
+      .repo-action { font-size: 0.82rem; padding: 0.3rem 0.6rem; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #555; cursor: pointer; }
+      .repo-action:hover:not(:disabled) { border-color: #bbb; color: #000; }
+      .repo-action:disabled { opacity: 0.5; cursor: default; }
+
+      /* Add / edit repo form */
+      #repo-form {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        background: #fafafa;
+        padding: 0.9rem 1rem 1rem;
+        margin-bottom: 1rem;
+        max-width: 640px;
+      }
+      .rf-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.8rem; color: #333; }
+      .rf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem 1rem; align-items: end; }
+      .rf-field { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.78rem; color: #777; }
+      .rf-full { grid-column: 1 / -1; }
+      .rf-narrow { max-width: 11rem; }
+      .rf-hint { color: #aaa; font-weight: 400; }
+      .rf-field input[type="text"], .rf-field select {
+        font-size: 0.88rem; padding: 0.35rem 0.5rem;
+        border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333;
+      }
+      .rf-field input:disabled { background: #f0f0f0; color: #999; }
+      .rf-inline { display: flex; gap: 0.4rem; }
+      .rf-inline input { flex: 1; }
+      .rf-inline button {
+        font-size: 0.8rem; padding: 0.3rem 0.6rem; border: 1px solid #ddd;
+        border-radius: 6px; background: #fff; color: #555; cursor: pointer; white-space: nowrap;
+      }
+      .rf-inline button:hover:not(:disabled) { border-color: #bbb; color: #000; }
+      .rf-inline button:disabled { opacity: 0.5; cursor: default; }
+      .rf-check { flex-direction: row; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: #555; }
+      .rf-check input { margin: 0; }
+      input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #ddd; border-radius: 6px; background: #fff; cursor: pointer; }
+      .rf-status { min-height: 1.1em; font-size: 0.82rem; color: #777; margin: 0.7rem 0 0.3rem; }
+      .rf-status.error { color: #c0392b; }
+      .rf-actions { display: flex; gap: 0.5rem; margin-top: 0.5rem; }
+      .rf-actions button {
+        font-size: 0.85rem; padding: 0.4rem 0.9rem; border: 1px solid #ddd;
+        border-radius: 6px; background: #fff; color: #555; cursor: pointer;
+      }
+      .rf-actions button:hover:not(:disabled) { border-color: #bbb; color: #000; }
+      .rf-actions button:disabled { opacity: 0.5; cursor: default; }
+      .rf-primary { background: #333; color: #fff; border-color: #333; }
+      .rf-primary:hover:not(:disabled) { background: #000; color: #fff; }
+      #rf-remove { color: #c0392b; border-color: #e6b0aa; margin-left: auto; }
+      #rf-remove:hover { background: #fdf0ee; color: #c0392b; }
       .toolbar { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
       .meta { color: #888; font-size: 0.9rem; }
       #status { color: #555; min-height: 1.2em; margin-bottom: 0.5rem; }
@@ -148,10 +196,51 @@
     <h2>Block Index</h2>
     <div class="repo-bar">
       <label for="repo-select">Repo</label>
-      <select id="repo-select">
-        <option value="da-express-milo">Express (da-express-milo)</option>
-        <option value="da-dc">Acrobat / DC (da-dc)</option>
-      </select>
+      <select id="repo-select"></select>
+      <button id="add-repo-btn" class="repo-action" type="button">+ Add repo</button>
+      <button id="edit-repo-btn" class="repo-action" type="button">Edit</button>
+    </div>
+    <div id="repo-form" hidden>
+      <div class="rf-title" id="rf-title">Add a repo</div>
+      <div class="rf-grid">
+        <label class="rf-field">
+          <span>Repo name</span>
+          <span class="rf-inline">
+            <input id="rf-id" type="text" placeholder="e.g. edu" autocomplete="off" spellcheck="false" />
+            <button id="rf-detect" type="button">Detect</button>
+          </span>
+        </label>
+        <label class="rf-field">
+          <span>Label</span>
+          <input id="rf-label" type="text" placeholder="Display name" autocomplete="off" />
+        </label>
+        <label class="rf-field rf-full">
+          <span>Blocks path <span class="rf-hint">(within the GitHub repo)</span></span>
+          <input id="rf-blocks" type="text" placeholder="auto-detected, e.g. edu/blocks" autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="rf-field rf-full" id="rf-candidates-field" hidden>
+          <span>Detected block folders</span>
+          <select id="rf-blocks-candidates"></select>
+        </div>
+        <label class="rf-field rf-narrow">
+          <span>Branch</span>
+          <input id="rf-ref" type="text" placeholder="stage" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="rf-field rf-narrow">
+          <span>Accent color</span>
+          <input id="rf-color" type="color" value="#2680eb" />
+        </label>
+        <label class="rf-field rf-check">
+          <input id="rf-milo" type="checkbox" checked />
+          <span>Uses milo blocks</span>
+        </label>
+      </div>
+      <p id="rf-status" class="rf-status"></p>
+      <div class="rf-actions">
+        <button id="rf-save" type="button" class="rf-primary">Save</button>
+        <button id="rf-remove" type="button" hidden>Remove</button>
+        <button id="rf-cancel" type="button">Cancel</button>
+      </div>
     </div>
     <div class="toolbar">
       <button id="scan-all-btn">Scan All</button>
