@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, Fragment } from 'react';
-import { postDoc, createDocVersion, cat, docExists, daPathToProdUrl } from '../api/daApi';
+import { postDoc, createDocVersion, cat, docExists, listDirDocPaths, daPathToProdUrl } from '../api/daApi';
 import { applyTemplate, rowToOutputPath, runGenerationQa, finalizeGeneratedDoc } from '../lib/generate';
-import { runBatch, DEFAULT_CONCURRENCY } from '../lib/concurrency';
+import { runBatch, DEFAULT_CONCURRENCY, EXISTENCE_CHECK_CONCURRENCY } from '../lib/concurrency';
 import { useDaDocumentActions } from '../hooks/useDaDocumentActions';
 import ConfirmModal from './ConfirmModal';
 import {
@@ -43,6 +43,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [existenceStatus, setExistenceStatus] = useState<Record<string, ExistenceCheck>>({});
   const checkedPaths = useRef<Set<string>>(new Set());
+  const dirListCache = useRef<Map<string, Set<string>>>(new Map());
   const [includeDuplicates, setIncludeDuplicates] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -73,20 +74,62 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
       (pr) => pr.hasConfig && pr.path && !checkedPaths.current.has(pr.path),
     );
     if (toCheck.length === 0) return;
+    // Claim every candidate synchronously, before any await, so the re-render this setState
+    // triggers filters them back out and the effect doesn't re-enter for the same paths.
     toCheck.forEach((pr) => checkedPaths.current.add(pr.path));
     setExistenceStatus((prev) => {
       const next = { ...prev };
       for (const pr of toCheck) next[pr.path] = 'checking';
       return next;
     });
-    void runBatch(toCheck, async (pr) => {
-      try {
-        const exists = await docExists(pr.path);
-        setExistenceStatus((prev) => ({ ...prev, [pr.path]: exists ? 'exists' : 'not-found' }));
-      } catch {
-        setExistenceStatus((prev) => ({ ...prev, [pr.path]: 'error' }));
+
+    // Group candidates by the directory that would list them — the path prefix a listed file
+    // shares. Deriving this from the candidate path (not the config outputDir) also correctly
+    // handles a url_slug that itself contains a '/'.
+    const byDir = new Map<string, string[]>();
+    for (const pr of toCheck) {
+      const dir = pr.path.slice(0, pr.path.lastIndexOf('/'));
+      const bucket = byDir.get(dir);
+      if (bucket) bucket.push(pr.path);
+      else byDir.set(dir, [pr.path]);
+    }
+
+    const resolveFromSet = (paths: string[], existing: Set<string>) =>
+      setExistenceStatus((prev) => {
+        const next = { ...prev };
+        for (const p of paths) next[p] = existing.has(p) ? 'exists' : 'not-found';
+        return next;
+      });
+
+    // Fallback for a directory whose listing failed: probe each candidate directly. Raised
+    // concurrency (DA source tolerates it); each probe self-throttles via fetchWithRetry.
+    const headFallback = (paths: string[]) =>
+      runBatch(paths, async (p) => {
+        try {
+          const exists = await docExists(p);
+          setExistenceStatus((prev) => ({ ...prev, [p]: exists ? 'exists' : 'not-found' }));
+        } catch {
+          setExistenceStatus((prev) => ({ ...prev, [p]: 'error' }));
+        }
+      }, EXISTENCE_CHECK_CONCURRENCY);
+
+    // Primary path: one directory listing resolves every candidate in that directory from an
+    // in-memory set, replacing one HEAD per document. Listings are memoized per directory for the
+    // session; a listing that throws routes just that directory's candidates to the HEAD fallback.
+    void runBatch([...byDir.entries()], async ([dir, paths]) => {
+      const cached = dirListCache.current.get(dir);
+      if (cached) {
+        resolveFromSet(paths, cached);
+        return;
       }
-    }, CONCURRENCY);
+      try {
+        const existing = await listDirDocPaths(dir);
+        dirListCache.current.set(dir, existing); // cache only after a fully successful listing
+        resolveFromSet(paths, existing);
+      } catch {
+        await headFallback(paths);
+      }
+    }, DEFAULT_CONCURRENCY);
   }, [previewRows, results.length]);
 
   useEffect(() => {
@@ -639,7 +682,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
           confirmLabel="Reset"
           confirmClassName="px-4 py-2 bg-gray-800 text-white text-sm font-medium rounded-xl hover:bg-gray-900 cursor-pointer transition-colors"
           onCancel={() => setResetModalOpen(false)}
-          onConfirm={() => { setResults([]); setExistenceStatus({}); checkedPaths.current.clear(); setResetModalOpen(false); }}
+          onConfirm={() => { setResults([]); setExistenceStatus({}); checkedPaths.current.clear(); dirListCache.current.clear(); setResetModalOpen(false); }}
         >
           <p className="text-sm text-gray-500">
             This will clear all {results.length} result{results.length !== 1 ? 's' : ''} from this

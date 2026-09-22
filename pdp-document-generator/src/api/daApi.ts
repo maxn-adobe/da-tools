@@ -1,4 +1,5 @@
 import { runBatch, DEFAULT_CONCURRENCY, sleep } from '../lib/concurrency';
+import { fetchWithRetry } from '../lib/http';
 
 const DA_API = 'https://admin.da.live';
 const HLX_ADMIN = 'https://admin.hlx.page';
@@ -87,7 +88,7 @@ export async function docExists(daPath: string): Promise<boolean> {
   const headers: Record<string, string> = { 'cache-control': 'no-store' };
   if (t) headers.Authorization = `Bearer ${t}`;
   const path = daPath.endsWith('.html') ? daPath : `${daPath}.html`;
-  const resp = await fetch(`${DA_API}/source${path}`, { method: 'HEAD', headers });
+  const resp = await fetchWithRetry(`${DA_API}/source${path}`, { method: 'HEAD', headers });
   if (resp.status === 404) return false;
   if (resp.ok) return true;
   throw new Error(`${resp.status}: ${daPath}`);
@@ -122,7 +123,7 @@ export async function listDirectory(dirPath: string): Promise<DaListItem[]> {
   for (let guard = 0; guard < 1_000_000; guard++) {
     const headers: Record<string, string> = { Authorization: `Bearer ${t}` };
     if (continuationToken) headers['da-continuation-token'] = continuationToken;
-    const resp = await fetch(`${DA_API}/list${dirPath}`, { headers });
+    const resp = await fetchWithRetry(`${DA_API}/list${dirPath}`, { headers });
     if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
     const pageItems = await resp.json() as DaListItem[];
     items.push(...pageItems);
@@ -130,6 +131,20 @@ export async function listDirectory(dirPath: string): Promise<DaListItem[]> {
     if (!continuationToken) break;
   }
   return items;
+}
+
+/**
+ * List a directory and return the set of existing HTML document paths in it (leading-slash, no
+ * extension) — the form a candidate output path (see `rowToOutputPath`) can be tested against with
+ * `.has(path)`. Filters to `ext === 'html'` so it matches `docExists`'s `slug.html` probe exactly:
+ * sub-directories (`ext` undefined) and non-HTML siblings sharing a slug (e.g. `slug.json`) are
+ * excluded, so neither a same-named folder nor a sibling asset ever reads as an existing document.
+ * `listDirectory` is all-or-nothing (it throws on any non-ok page rather than returning partial
+ * results), so callers get either a complete set or an exception to route to a per-path fallback.
+ */
+export async function listDirDocPaths(dirPath: string): Promise<Set<string>> {
+  const items = await listDirectory(dirPath);
+  return new Set(items.filter((i) => i.ext === 'html').map((i) => i.path));
 }
 
 export interface DirectoryCheckResult {
@@ -231,7 +246,7 @@ export function validateTemplate(html: string): TemplateValidation {
 
 export async function triggerPreview(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
-  const resp = await fetch(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {
+  const resp = await fetchWithRetry(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -240,7 +255,7 @@ export async function triggerPreview(daPath: string, token: string): Promise<voi
 
 export async function triggerPublish(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
-  const resp = await fetch(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
+  const resp = await fetchWithRetry(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
