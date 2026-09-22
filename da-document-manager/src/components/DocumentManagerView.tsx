@@ -4,12 +4,13 @@ import { checkDirectoryExists, daPathToLiveUrl, daPathToPreviewUrl, daPathToProd
 import type { CrawlError } from '../api/crawl';
 import { useDaDocumentActions } from '../hooks/useDaDocumentActions';
 import ConfirmModal from './ConfirmModal';
-import DrillDownNav from './DrillDownNav';
 import DocumentManagerTable, { type SortField } from './DocumentManagerTable';
 import type { DocRow } from '../types';
 
 const ALL = 'all';
 const NO_BATCH = '(no batch)';
+// Pre-filled path + placeholder for the scan input; scanning stays manual (see rootPath below).
+const DEFAULT_ROOT_PATH = '/adobecom/da-express-milo/drafts/maxn';
 type StatusKey = 'draft' | 'previewed' | 'published' | 'unknown';
 type BulkConfirmOp = 'preview' | 'publish' | 'unpublish' | 'delete';
 type UrlExportKind = 'document' | 'preview' | 'live' | 'prod';
@@ -50,7 +51,7 @@ function ScanProgressBar({ progress }: { progress: { phase: ScanPhase; done: num
 }
 
 export default function DocumentManagerView() {
-  const [rootPathInput, setRootPathInput] = useState('');
+  const [rootPathInput, setRootPathInput] = useState(DEFAULT_ROOT_PATH);
   // Starts null so the scan is manual — kicked off by the Scan button via handleScan.
   const [rootPath, setRootPath] = useState<string | null>(null);
   const [scanNonce, setScanNonce] = useState(0);
@@ -58,7 +59,7 @@ export default function DocumentManagerView() {
   const [crawlErrors, setCrawlErrors] = useState<CrawlError[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState<string>(ALL);
-  const [drillPath, setDrillPath] = useState<string[]>([]);
+  const [subDirFilter, setSubDirFilter] = useState<string>(ALL);
   const [batchFilter, setBatchFilter] = useState<string>(ALL);
   const [batchDataState, setBatchDataState] = useState<'none' | 'loading' | 'loaded'>('none');
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null);
@@ -72,6 +73,7 @@ export default function DocumentManagerView() {
   const [pathError, setPathError] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showPathHints, setShowPathHints] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const [scanProgress, setScanProgress] = useState<{ phase: ScanPhase; done: number; total: number } | null>(null);
   const scanning = scanProgress !== null;
@@ -112,13 +114,13 @@ export default function DocumentManagerView() {
   // (flipped in cleanup) makes a superseded or unmounted scan's callbacks no-ops.
   useEffect(() => {
     if (rootPath === null) return;
-    // A new scan supersedes any in-flight manual op (recheck / batch load) and resets the drill nav
+    // A new scan supersedes any in-flight manual op (recheck / batch load) and resets the sub-directory
     // + filters (the tree changed, so a stale prefix/batch could point at things that no longer exist).
     opIdRef.current += 1;
     setBatchDataState('none');
     setBatchFilter(ALL);
     setBatchProgress(null);
-    setDrillPath([]);
+    setSubDirFilter(ALL);
     let stale = false;
     void scanDocs(rootPath, {
       onDiscovered: (placeholders) => {
@@ -217,21 +219,24 @@ export default function DocumentManagerView() {
     setBatchProgress(null);
   }
 
-  // Immediate child folders of the current drill level, with counts — derived from ALL docs (not
-  // `filtered`) so status/batch filters never distort the folder tree.
-  const drillChildren = useMemo(() => {
+  // Every distinct sub-directory (folder prefix) across all docs, with a descendant-inclusive doc
+  // count — derived from ALL docs (not `filtered`) so status/batch filters never distort the tree.
+  // Each folder counts docs directly in it AND in any nested folder, matching the counts shown by
+  // the drill-down pills this dropdown replaced.
+  const subDirOptions = useMemo(() => {
     const counts = new Map<string, number>();
     for (const d of docs) {
       const segs = toSegs(d.subDirectory);
-      if (segs.length <= drillPath.length) continue; // sits in current level or above
-      if (drillPath.some((s, i) => segs[i] !== s)) continue; // not under current prefix
-      const child = segs[drillPath.length];
-      counts.set(child, (counts.get(child) ?? 0) + 1);
+      // Tally this doc against its own folder and every ancestor folder (prefix-inclusive).
+      for (let i = 1; i <= segs.length; i++) {
+        const path = `/${segs.slice(0, i).join('/')}`;
+        counts.set(path, (counts.get(path) ?? 0) + 1);
+      }
     }
     return [...counts.entries()]
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [docs, drillPath]);
+      .map(([path, count]) => ({ path, count }))
+      .sort((a, b) => a.path.localeCompare(b.path));
+  }, [docs]);
 
   // Distinct batch values (newest ISO first), with a "(no batch)" bucket last.
   const batches = useMemo(
@@ -241,15 +246,14 @@ export default function DocumentManagerView() {
   );
 
   const filtered = useMemo(() => {
-    const prefix = drillPath.length ? `/${drillPath.join('/')}` : null;
     return docs.filter((d) => {
-      // Drill filter is prefix-inclusive: the folder itself and everything nested under it.
-      if (prefix && !(d.subDirectory === prefix || d.subDirectory.startsWith(`${prefix}/`))) return false;
+      // Sub-directory filter is prefix-inclusive: the folder itself and everything nested under it.
+      if (subDirFilter !== ALL && !(d.subDirectory === subDirFilter || d.subDirectory.startsWith(`${subDirFilter}/`))) return false;
       if (statusFilter !== ALL && statusOf(d) !== statusFilter) return false;
       if (batchFilter !== ALL && (d.generatedBatch || NO_BATCH) !== batchFilter) return false;
       return true;
     });
-  }, [docs, drillPath, statusFilter, batchFilter]);
+  }, [docs, subDirFilter, statusFilter, batchFilter]);
 
   const sorted = useMemo(() => {
     const value = (d: DocRow): string => {
@@ -339,54 +343,95 @@ export default function DocumentManagerView() {
 
   const selectedDocs = docs.filter((d) => selected.has(d.path));
 
+  // Keep the selection in sync with the doc list: drop any selected path that no longer exists
+  // (e.g. after a bulk delete) so the "N selected" count and select-all state stay correct.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(docs.map((d) => d.path));
+      let changed = false;
+      const next = new Set<string>();
+      for (const p of prev) {
+        if (valid.has(p)) next.add(p);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [docs]);
+
   async function withBusy(fn: () => Promise<void>) {
     setBusy(true);
     try {
       await fn();
     } finally {
       setBusy(false);
-      setSelected(new Set());
+      // Selections persist across bulk ops so users can chain workflows (preview → publish →
+      // unpublish/delete) on the same batch. Deleted rows are pruned by the reconcile effect below.
     }
   }
 
   const unknownCount = hasScanned && !scanning ? docs.filter((d) => d.statusUnknown).length : 0;
-  const anyFilterActive = statusFilter !== ALL || batchFilter !== ALL || drillPath.length > 0;
+  const anyFilterActive = statusFilter !== ALL || batchFilter !== ALL || subDirFilter !== ALL;
 
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <h2 className="font-medium text-gray-900">Document Manager</h2>
-      </div>
-
-      <div className="flex items-center gap-3 flex-wrap">
-        <input
-          type="text"
-          value={rootPathInput}
-          onChange={(e) => setRootPathInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') void handleScan(); }}
-          placeholder="/org/repo/path"
-          className="flex-1 min-w-[280px] max-w-md h-9 px-3 border border-gray-300 rounded-lg text-sm font-mono"
-        />
-        <button
-          type="button"
-          onClick={() => void handleScan()}
-          disabled={anyBusy || !rootPathInput.trim()}
-          className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
-        >
-          {validating ? 'Checking…' : scanning ? 'Scanning…' : rootPath === rootPathInput.trim() && hasScanned ? 'Rescan' : 'Scan'}
-        </button>
-        {hasScanned && !scanning && docs.length > 0 && (
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-1.5">
+          <label htmlFor="dm-root-path" className="text-xs font-medium text-gray-600">Directory to scan</label>
           <button
             type="button"
-            onClick={handleRefreshStatus}
-            disabled={anyBusy}
-            className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+            onClick={() => setShowPathHints((p) => !p)}
+            aria-label="Show example paths"
+            aria-expanded={showPathHints}
+            title="Show example paths"
+            className="text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
           >
-            Refresh status
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+              <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
+            </svg>
           </button>
-        )}
-        {hasScanned && !scanning && (
-          <span className="text-sm text-gray-500">{docs.length} document{docs.length !== 1 ? 's' : ''} found</span>
+        </div>
+
+        <div className="flex items-center gap-3 flex-wrap">
+          <input
+            id="dm-root-path"
+            type="text"
+            value={rootPathInput}
+            onChange={(e) => setRootPathInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void handleScan(); }}
+            placeholder={DEFAULT_ROOT_PATH}
+            className="flex-1 min-w-[280px] max-w-md h-9 px-3 border border-gray-300 rounded-lg text-sm font-mono"
+          />
+          <button
+            type="button"
+            onClick={() => void handleScan()}
+            disabled={anyBusy || !rootPathInput.trim()}
+            className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+          >
+            {validating ? 'Checking…' : scanning ? 'Scanning…' : rootPath === rootPathInput.trim() && hasScanned ? 'Rescan' : 'Scan'}
+          </button>
+          {hasScanned && !scanning && docs.length > 0 && (
+            <button
+              type="button"
+              onClick={handleRefreshStatus}
+              disabled={anyBusy}
+              className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-xl border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
+            >
+              Refresh status
+            </button>
+          )}
+          {hasScanned && !scanning && (
+            <span className="text-sm text-gray-500">{docs.length} document{docs.length !== 1 ? 's' : ''} found</span>
+          )}
+        </div>
+
+        {showPathHints && (
+          <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+            <span>You can scan any DA directory, including other repos. Examples:</span>
+            <span className="font-mono text-gray-400">/adobecom/da-express-milo/express/print</span>
+            <span className="font-mono text-gray-400">/adobecom/da-express-milo/drafts/teammate</span>
+            <span className="font-mono text-gray-400">/adobecom/milo/drafts/maxn <span className="font-sans">(different repo)</span></span>
+          </div>
         )}
       </div>
 
@@ -427,16 +472,22 @@ export default function DocumentManagerView() {
 
       {(docs.length > 0 || hasScanned) && (
         <>
-          {(drillPath.length > 0 || drillChildren.length > 0) && (
-            <DrillDownNav
-              segments={drillPath}
-              childFolders={drillChildren}
-              onNavigate={(depth) => setDrillPath(drillPath.slice(0, depth))}
-              onDrill={(name) => setDrillPath([...drillPath, name])}
-            />
-          )}
-
           <div className="flex items-center gap-3 flex-wrap text-sm">
+            {subDirOptions.length > 0 && (
+              <label className="flex items-center gap-1.5 text-gray-600">
+                Sub-directory
+                <select
+                  value={subDirFilter}
+                  onChange={(e) => setSubDirFilter(e.target.value)}
+                  className="h-8 px-2 border border-gray-300 rounded-lg text-sm max-w-[240px]"
+                >
+                  <option value={ALL}>All</option>
+                  {subDirOptions.map((o) => (
+                    <option key={o.path} value={o.path}>{o.path} ({o.count})</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="flex items-center gap-1.5 text-gray-600">
               Status
               <select
@@ -530,22 +581,19 @@ export default function DocumentManagerView() {
             </div>
           </div>
 
-          {selected.size > 0 && (
-            <div className="flex items-center gap-2 flex-wrap text-sm bg-gray-50 border border-gray-200 rounded-xl px-4 py-2">
-              <span className="font-medium text-gray-700">{selected.size} selected</span>
-              <BulkButton label="Preview" onClick={() => setConfirmOp('preview')} busy={anyBusy} className="text-indigo-700 hover:bg-indigo-50 border-indigo-200" />
-              <BulkButton label="Publish" onClick={() => setConfirmOp('publish')} busy={anyBusy} className="text-green-700 hover:bg-green-50 border-green-200" />
-              <BulkButton label="Unpublish" onClick={() => setConfirmOp('unpublish')} busy={anyBusy} className="text-red-700 hover:bg-red-50 border-red-200" />
-              <BulkButton label="Delete" onClick={() => setConfirmOp('delete')} busy={anyBusy} className="text-red-700 hover:bg-red-50 border-red-200" />
-              <button
-                type="button"
-                onClick={() => setSelected(new Set())}
-                className="ml-auto text-gray-500 hover:text-gray-800 font-medium cursor-pointer"
-              >
-                Clear
-              </button>
-            </div>
-          )}
+          {docs.length > 0 && (() => {
+            const baseDisabled = anyBusy || selectedDocs.length === 0;
+            const allPublished = selectedDocs.length > 0 && selectedDocs.every((d) => statusOf(d) === 'published');
+            return (
+              <div className="flex items-center gap-2 flex-wrap text-sm bg-gray-50 border border-gray-200 rounded-xl px-4 py-2">
+                <span className="font-medium text-gray-700">{selectedDocs.length} selected</span>
+                <BulkButton label="Preview" onClick={() => setConfirmOp('preview')} disabled={baseDisabled} className="text-indigo-700 hover:bg-indigo-50 border-indigo-200" />
+                <BulkButton label="Publish" onClick={() => setConfirmOp('publish')} disabled={baseDisabled} className="text-green-700 hover:bg-green-50 border-green-200" />
+                <BulkButton label="Unpublish" onClick={() => setConfirmOp('unpublish')} disabled={baseDisabled || !allPublished} className="text-red-700 hover:bg-red-50 border-red-200" />
+                <BulkButton label="Delete" onClick={() => setConfirmOp('delete')} disabled={baseDisabled} className="text-red-700 hover:bg-red-50 border-red-200" />
+              </div>
+            );
+          })()}
 
           <DocumentManagerTable
             rows={sorted}
@@ -590,19 +638,19 @@ export default function DocumentManagerView() {
 function BulkButton({
   label,
   onClick,
-  busy,
+  disabled,
   className,
 }: {
   label: string;
   onClick: () => void;
-  busy: boolean;
+  disabled: boolean;
   className: string;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      disabled={busy}
+      disabled={disabled}
       className={`px-3 py-1.5 bg-white text-xs font-medium rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors ${className}`}
     >
       {label}

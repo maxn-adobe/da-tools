@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "da-document-manager",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "da-document-manager", "run", "dev"],
+      "port": 3000
+    }
+  ]
+}
