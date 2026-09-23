@@ -12,6 +12,12 @@ const ALL = 'all';
 const NO_BATCH = '(no batch)';
 // Pre-filled path + placeholder for the scan input; scanning stays manual (see rootPath below).
 const DEFAULT_ROOT_PATH = '/adobecom/da-express-milo/drafts/maxn';
+// Example paths shown in the info popover, each with a copy-to-clipboard button.
+const EXAMPLE_PATHS = [
+  '/adobecom/da-express-milo/express/print/business-card',
+  '/adobecom/da-dc/acrobat/online',
+  '/adobecom/da-bacom/ca',
+];
 type StatusKey = 'draft' | 'previewed' | 'published' | 'unknown';
 type BulkConfirmOp = 'preview' | 'publish' | 'unpublish' | 'delete';
 type UrlExportKind = 'document' | 'preview' | 'live' | 'prod';
@@ -48,6 +54,41 @@ function ScanProgressBar({ progress }: { progress: { phase: ScanPhase; done: num
         />
       </div>
     </div>
+  );
+}
+
+/** An example path with a copy-to-clipboard button that briefly confirms the copy. */
+function CopyablePath({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch { /* clipboard unavailable (insecure context / denied) — no-op */ }
+  }
+  return (
+    <span className="font-mono text-gray-400">
+      {path}
+      <button
+        type="button"
+        onClick={() => void copy()}
+        aria-label={copied ? 'Copied' : 'Copy path to clipboard'}
+        title={copied ? 'Copied' : 'Copy to clipboard'}
+        className={`ml-1.5 inline-flex align-middle cursor-pointer transition-colors ${copied ? 'text-green-600' : 'text-gray-400 hover:text-gray-600'}`}
+      >
+        {copied ? (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          </svg>
+        )}
+      </button>
+    </span>
   );
 }
 
@@ -400,18 +441,47 @@ export default function DocumentManagerView() {
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="dm-root-path" className="text-xs font-medium text-gray-600">Directory to scan</label>
+        {/* Label + info icon (the icon sits next to the label). */}
+        <div className="flex items-center gap-1.5">
+          <label htmlFor="dm-root-path" className="text-xs font-medium text-gray-600">Directory to scan</label>
+          <button
+            type="button"
+            onClick={() => setShowPathHints((p) => !p)}
+            aria-label="Show example paths"
+            aria-expanded={showPathHints}
+            title="Show example paths"
+            className={`inline-flex items-center shrink-0 cursor-pointer transition-colors ${showPathHints ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-3.5 h-3.5 block">
+              <path fillRule="evenodd" d="M2.25 12c0-5.385 4.365-9.75 9.75-9.75s9.75 4.365 9.75 9.75-4.365 9.75-9.75 9.75S2.25 17.385 2.25 12Zm8.706-1.442c1.146-.573 2.437.463 2.126 1.706l-.709 2.836.042-.02a.75.75 0 0 1 .67 1.342l-.04.022c-1.147.573-2.438-.463-2.127-1.706l.71-2.836-.042.02a.75.75 0 1 1-.671-1.34l.041-.022ZM12 9a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Z" clipRule="evenodd" />
+            </svg>
+          </button>
+        </div>
 
+        {/* Example paths shown underneath the label when toggled, each with a copy-to-clipboard button. */}
+        {showPathHints && (
+          <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+            <span>Examples:</span>
+            {EXAMPLE_PATHS.map((p) => <CopyablePath key={p} path={p} />)}
+          </div>
+        )}
+
+        {/* Directory input, prefixed with the fixed da.live URL so the field completes a full URL. */}
         <div className="flex items-center gap-3 flex-wrap">
-          <input
-            id="dm-root-path"
-            type="text"
-            value={rootPathInput}
-            onChange={(e) => setRootPathInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') void handleScan(); }}
-            placeholder={DEFAULT_ROOT_PATH}
-            className="flex-1 min-w-[280px] max-w-md h-9 px-3 border border-gray-300 rounded-lg text-sm font-mono"
-          />
+          <div className="flex items-stretch flex-1 min-w-[280px] h-9 rounded-lg border border-gray-300 bg-white overflow-hidden focus-within:border-blue-400">
+            <span className="flex items-center shrink-0 select-none border-r border-gray-300 bg-gray-50 px-2 text-xs font-mono text-gray-400">
+              https://da.live/#
+            </span>
+            <input
+              id="dm-root-path"
+              type="text"
+              value={rootPathInput}
+              onChange={(e) => setRootPathInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') void handleScan(); }}
+              placeholder={DEFAULT_ROOT_PATH}
+              className="flex-1 min-w-0 px-3 text-sm font-mono bg-transparent focus:outline-none"
+            />
+          </div>
           <button
             type="button"
             onClick={() => void handleScan()}
@@ -435,7 +505,7 @@ export default function DocumentManagerView() {
           )}
         </div>
 
-        {/* Live directory-validation feedback (debounced) — mirrors the PDP/output-directory pattern. */}
+        {/* Live directory-validation feedback (debounced) — shows the full absolute da.live URL. */}
         {dirCheck.loading && <p className="text-xs text-gray-400">Validating…</p>}
         {!dirCheck.loading && (dirCheck.valid || dirCheck.error) && (
           <div className="flex flex-wrap items-center gap-2">
@@ -453,7 +523,7 @@ export default function DocumentManagerView() {
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-1 break-all font-mono text-xs text-gray-500 hover:text-blue-600"
               >
-                {rootPathInput.trim()}
+                {`https://da.live/#${rootPathInput.trim()}`}
                 <ExternalLinkIcon />
               </a>
             ) : (
@@ -461,35 +531,7 @@ export default function DocumentManagerView() {
             )}
           </div>
         )}
-
-        {/* Example paths — info icon on the left, examples to its right when toggled. */}
-        <div className="flex items-start gap-2">
-          <button
-            type="button"
-            onClick={() => setShowPathHints((p) => !p)}
-            aria-label="Show example paths"
-            aria-expanded={showPathHints}
-            title="Show example paths"
-            className={`shrink-0 cursor-pointer transition-colors ${showPathHints ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-              <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
-            </svg>
-          </button>
-          {showPathHints && (
-            <div className="flex flex-col gap-0.5 text-xs text-gray-500">
-              <span>Examples:</span>
-              <span className="font-mono text-gray-400">/adobecom/da-express-milo/express/print/business-card</span>
-              <span className="font-mono text-gray-400">/adobecom/da-dc/acrobat/online</span>
-              <span className="font-mono text-gray-400">/adobecom/da-bacom/ca</span>
-            </div>
-          )}
-        </div>
       </div>
-
-      {!hasScanned && !scanning && (
-        <p className="text-sm text-gray-500">Enter a DA folder path above and click Scan to load its documents.</p>
-      )}
 
       {scanning && scanProgress && <ScanProgressBar progress={scanProgress} />}
 

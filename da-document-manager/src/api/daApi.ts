@@ -69,8 +69,26 @@ export interface DirectoryCheckResult {
 
 export async function checkDirectoryExists(dirPath: string): Promise<DirectoryCheckResult> {
   try {
-    await listDirectory(dirPath);
-    return { valid: true };
+    // DA's /list is a prefix listing, not a lookup: a path that doesn't exist returns 200 with an
+    // empty array (not a 404). So a successful call is NOT proof the folder exists — we must confirm
+    // it positively.
+    const items = await listDirectory(dirPath);
+    // Fast path: any children (documents or sub-folders) means the folder is real and scannable.
+    if (items.length > 0) return { valid: true };
+    // Empty listing → either a genuinely-empty-but-real folder or a non-existent path. Disambiguate
+    // by checking whether the folder shows up as a sub-directory (an entry with no `ext`) in its
+    // parent's listing — that's how DA reports real folders (see the crawler's ext-absence rule).
+    const trimmed = dirPath.replace(/\/+$/, '');
+    const lastSlash = trimmed.lastIndexOf('/');
+    if (lastSlash <= 0) {
+      return { valid: false, error: 'Directory not found — confirm the path exists in DA' };
+    }
+    const parent = trimmed.slice(0, lastSlash);
+    const siblings = await listDirectory(parent);
+    const exists = siblings.some((s) => s.ext === undefined && s.path.replace(/\/+$/, '') === trimmed);
+    return exists
+      ? { valid: true }
+      : { valid: false, error: 'Directory not found — confirm the path exists in DA' };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const is403 = msg.startsWith('403');
