@@ -350,6 +350,8 @@ const HEAD_BATCH_MS = 300;        // min ms per HEAD batch (paces well under the
 
 const BULK_MUTATE_CHUNK = 500;    // paths per preview/publish job (smaller than status: these RENDER pages)
 const MUTATE_POLL_MAX = 300;      // give up on a mutate job after ~5 min → per-path fan-out
+const MUTATE_JOB_CONCURRENCY = 3; // bulk job chunks run this many at once (≤3 pending/topic ≪ 500 cap; ~3 polls/s ≪ 10 req/s)
+const JOB_404_GRACE = 3;          // tolerate a transient 404 on the first few polls (job not yet queryable)
 
 type StatusProgress = (done: number, total: number) => void;
 
@@ -551,8 +553,8 @@ async function runBulkStatusChunk(
 // The per-path result shape in a preview/live job's /details is NOT publicly documented, so we do
 // NOT trust it: after each job we reconcile the true per-path outcome via resolveStatuses (the same
 // reliable bulk-status path the Document Manager scan uses). progress.failed only gates whether a
-// chunk was "clean" (see runBulkMutate). Chunks run STRICTLY sequentially — never parallelize them,
-// or the 500-pending-jobs-per-topic cap comes into play.
+// chunk was "clean" (see runBulkMutate). Chunks run a few at a time (MUTATE_JOB_CONCURRENCY) — well
+// under the 500-pending-jobs-per-topic cap and the 10 req/s admin limit — to cut wall-clock at scale.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface BulkMutateOutcome {
@@ -582,16 +584,22 @@ async function runBulkMutateChunk(
     body: JSON.stringify(body),
   });
   if (!startResp.ok) throw new Error(`bulk ${topic} start: ${startResp.status}`);
-  const startData = await startResp.json() as { job?: { name?: string }; links?: { self?: string } };
+  const startData = await startResp.json() as { job?: { name?: string; topic?: string }; links?: { self?: string } };
   const jobName = startData.job?.name ?? startData.links?.self?.split('/').pop();
   if (!jobName) throw new Error(`bulk ${topic}: missing job name`);
 
-  const jobUrl = `${HLX_ADMIN}/job/${org}/${repo}/${BRANCH}/${topic}/${jobName}`;
+  // The job's poll topic is NOT the start-path segment: a `/live/*` (publish) start is filed under
+  // topic "publish", not "live" — polling "live" 404s and drops the whole chunk to the slow fan-out.
+  // Preview happens to match ("preview"). Use the topic the start response actually reports.
+  const jobTopic = startData.job?.topic ?? topic;
+  const jobUrl = `${HLX_ADMIN}/job/${org}/${repo}/${BRANCH}/${jobTopic}/${jobName}`;
   let stopped = false;
   let failed = 0;
   for (let attempt = 0; attempt < MUTATE_POLL_MAX && !stopped; attempt++) {
     await sleep(JOB_POLL_MS);
     const jResp = await fetchWithRetry(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
+    // A freshly-created job can 404 for a moment before it's queryable; tolerate that briefly.
+    if (jResp.status === 404 && attempt < JOB_404_GRACE) continue;
     if (!jResp.ok) throw new Error(`bulk ${topic} poll: ${jResp.status}`);
     const jData = await jResp.json() as { state?: string; progress?: { total?: number; processed?: number; failed?: number } };
     const p = jData.progress ?? {};
@@ -635,16 +643,22 @@ async function runBulkMutate(
   const dedup = [...new Set(paths)];
   const grandTotal = dedup.length;
   const chunkClean = new Map<string, boolean>();  // path → its chunk's job completed with failed === 0
-  let processedBase = 0;
   let failedTotal = 0;
 
-  for (let i = 0; i < dedup.length; i += BULK_MUTATE_CHUNK) {
-    const chunk = dedup.slice(i, i + BULK_MUTATE_CHUNK);
+  // Split into chunks and run a few jobs concurrently (MUTATE_JOB_CONCURRENCY). Progress is the sum
+  // of each chunk's reported processed count — JS is single-threaded, so the shared writes to
+  // perChunkDone / failedTotal / chunkClean below are race-free.
+  const chunks: string[][] = [];
+  for (let i = 0; i < dedup.length; i += BULK_MUTATE_CHUNK) chunks.push(dedup.slice(i, i + BULK_MUTATE_CHUNK));
+  const perChunkDone = new Array<number>(chunks.length).fill(0);
+  const report = () => onProgress?.(Math.min(perChunkDone.reduce((a, b) => a + b, 0), grandTotal), grandTotal);
+
+  await runBatch(chunks.map((chunk, idx) => ({ chunk, idx })), async ({ chunk, idx }) => {
     const contentPaths = chunk.map((p) => parseDAPath(p).contentPath);
     try {
       const { failed } = await runBulkMutateChunk(
         org, repo, topic, contentPaths, token,
-        (proc) => onProgress?.(Math.min(processedBase + proc, grandTotal), grandTotal),
+        (proc) => { perChunkDone[idx] = proc; report(); },
         deleteOp,
       );
       failedTotal += failed;
@@ -657,9 +671,9 @@ async function runBulkMutate(
       await runBatch(chunk, async (p) => { try { await trigger(p, token); } catch { /* reconcile decides */ } }, DEFAULT_CONCURRENCY);
       for (const p of chunk) chunkClean.set(p, false);
     }
-    processedBase = Math.min(processedBase + chunk.length, grandTotal);
-    onProgress?.(processedBase, grandTotal);
-  }
+    perChunkDone[idx] = chunk.length;
+    report();
+  }, MUTATE_JOB_CONCURRENCY);
 
   // Reconcile the authoritative per-path outcome via the reliable bulk-status path.
   const status = await resolveStatuses(dedup, token);

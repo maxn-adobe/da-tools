@@ -47,6 +47,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const [bulkProgress, setBulkProgress] = useState<{ op: BulkProgressOp; done: number; total: number } | null>(null);
   const [publishQaMode, setPublishQaMode] = useState<PublishQaConfig>({ mode: 'off' });
+  const [generateConcurrency, setGenerateConcurrency] = useState(GENERATE_CONCURRENCY);
 
   const actions = useDaDocumentActions<RowResult>(setResults, {
     afterDelete: (r) => ({ id: r.id, path: r.path, stage: 'pending' }),
@@ -290,7 +291,7 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
       }
     }
 
-    await Promise.all(Array.from({ length: Math.min(GENERATE_CONCURRENCY, queue.length) }, worker));
+    await Promise.all(Array.from({ length: Math.min(generateConcurrency, queue.length) }, worker));
     setBulkOp('idle');
   }
 
@@ -394,6 +395,19 @@ export default function GeneratePanel({ rows, productTypeConfigs, overrideConfig
             Reset Results
           </button>
         )}
+
+        <label className="flex items-center gap-1.5 text-xs text-gray-600" title="How many document writes run in parallel. Higher is faster but may hit DA rate limits; retry absorbs transient throttling.">
+          Write concurrency
+          <input
+            type="number"
+            min={1}
+            max={24}
+            value={generateConcurrency}
+            disabled={running}
+            onChange={(e) => setGenerateConcurrency(Math.max(1, Math.min(24, Number(e.target.value) || 1)))}
+            className="w-14 h-7 px-1.5 border border-gray-300 rounded-lg text-xs disabled:opacity-50"
+          />
+        </label>
 
         <div className="relative group inline-block">
           <button
