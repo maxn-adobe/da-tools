@@ -1,4 +1,5 @@
 import { runBatch, DEFAULT_CONCURRENCY, sleep } from '../lib/concurrency';
+import { fetchWithRetry } from '../lib/http';
 
 const DA_API = 'https://admin.da.live';
 const HLX_ADMIN = 'https://admin.hlx.page';
@@ -41,7 +42,7 @@ export async function postDoc(dest: string, html: string): Promise<PostDocRespon
   const blob = new Blob([html], { type: 'text/html' });
   const body = new FormData();
   body.append('data', blob);
-  const resp = await fetch(fullpath, {
+  const resp = await fetchWithRetry(fullpath, {
     method: 'POST',
     headers: { Authorization: `Bearer ${t}` },
     body,
@@ -57,7 +58,7 @@ export async function createDocVersion(dest: string, label: string): Promise<voi
   const t = getToken();
   if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
   const path = dest.endsWith('.html') ? dest : `${dest}.html`;
-  const resp = await fetch(`${DA_API}/versionsource${path}`, {
+  const resp = await fetchWithRetry(`${DA_API}/versionsource${path}`, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${t}`,
@@ -76,7 +77,7 @@ export async function docExists(daPath: string): Promise<boolean> {
   const headers: Record<string, string> = { 'cache-control': 'no-store' };
   if (t) headers.Authorization = `Bearer ${t}`;
   const path = daPath.endsWith('.html') ? daPath : `${daPath}.html`;
-  const resp = await fetch(`${DA_API}/source${path}`, { method: 'HEAD', headers });
+  const resp = await fetchWithRetry(`${DA_API}/source${path}`, { method: 'HEAD', headers });
   if (resp.status === 404) return false;
   if (resp.ok) return true;
   throw new Error(`${resp.status}: ${daPath}`);
@@ -86,7 +87,7 @@ export async function cat(filePath: string): Promise<string> {
   const t = getToken();
   if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
   const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
-  const resp = await fetch(`${DA_API}/source${path}`, {
+  const resp = await fetchWithRetry(`${DA_API}/source${path}`, {
     cache: 'no-store',
     headers: { Authorization: `Bearer ${t}` },
   });
@@ -107,7 +108,7 @@ export interface DaListItem {
 export async function listDirectory(dirPath: string): Promise<DaListItem[]> {
   const t = getToken();
   if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
-  const resp = await fetch(`${DA_API}/list${dirPath}`, {
+  const resp = await fetchWithRetry(`${DA_API}/list${dirPath}`, {
     headers: { Authorization: `Bearer ${t}` },
   });
   if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
@@ -142,7 +143,7 @@ export async function fetchSheet(daPath: string): Promise<Record<string, string>
   const t = getToken();
   if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
   const path = daPath.endsWith('.json') ? daPath : `${daPath}.json`;
-  const resp = await fetch(`${DA_API}/source${path}`, {
+  const resp = await fetchWithRetry(`${DA_API}/source${path}`, {
     cache: 'no-store',
     headers: { Authorization: `Bearer ${t}` },
   });
@@ -213,7 +214,7 @@ export function validateTemplate(html: string): TemplateValidation {
 
 export async function triggerPreview(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
-  const resp = await fetch(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {
+  const resp = await fetchWithRetry(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -222,7 +223,7 @@ export async function triggerPreview(daPath: string, token: string): Promise<voi
 
 export async function triggerPublish(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
-  const resp = await fetch(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
+  const resp = await fetchWithRetry(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -231,7 +232,7 @@ export async function triggerPublish(daPath: string, token: string): Promise<voi
 
 export async function triggerUnpublish(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
-  const resp = await fetch(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
+  const resp = await fetchWithRetry(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -240,7 +241,7 @@ export async function triggerUnpublish(daPath: string, token: string): Promise<v
 
 export async function deleteDocument(daPath: string, token: string): Promise<void> {
   const fullpath = `${DA_API}/source${daPath}${daPath.endsWith('.html') ? '' : '.html'}`;
-  const resp = await fetch(fullpath, {
+  const resp = await fetchWithRetry(fullpath, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   });

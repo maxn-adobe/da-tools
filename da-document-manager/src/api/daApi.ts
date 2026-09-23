@@ -1,4 +1,5 @@
 import { sleep } from '../lib/concurrency';
+import { fetchWithRetry } from '../lib/http';
 import { getToken } from '../da';
 
 const DA_API = 'https://admin.da.live';
@@ -51,7 +52,7 @@ export async function listDirectory(dirPath: string): Promise<DaListItem[]> {
   for (let guard = 0; guard < 1_000_000; guard++) {
     const headers: Record<string, string> = { Authorization: `Bearer ${t}` };
     if (continuationToken) headers['da-continuation-token'] = continuationToken;
-    const resp = await fetch(`${DA_API}/list${dirPath}`, { headers });
+    const resp = await fetchWithRetry(`${DA_API}/list${dirPath}`, { headers });
     if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
     const pageItems = await resp.json() as DaListItem[];
     items.push(...pageItems);
@@ -89,7 +90,7 @@ export async function cat(filePath: string): Promise<string> {
   const t = getToken();
   if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
   const path = filePath.endsWith('.html') ? filePath : `${filePath}.html`;
-  const resp = await fetch(`${DA_API}/source${path}`, {
+  const resp = await fetchWithRetry(`${DA_API}/source${path}`, {
     cache: 'no-store',
     headers: { Authorization: `Bearer ${t}` },
   });
@@ -99,7 +100,7 @@ export async function cat(filePath: string): Promise<string> {
 
 export async function triggerPreview(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
-  const resp = await fetch(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {
+  const resp = await fetchWithRetry(`${HLX_ADMIN}/preview/${org}/${repo}/${BRANCH}${contentPath}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -108,7 +109,7 @@ export async function triggerPreview(daPath: string, token: string): Promise<voi
 
 export async function triggerPublish(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
-  const resp = await fetch(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
+  const resp = await fetchWithRetry(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -117,7 +118,7 @@ export async function triggerPublish(daPath: string, token: string): Promise<voi
 
 export async function triggerUnpublish(daPath: string, token: string): Promise<void> {
   const { org, repo, contentPath } = parseDAPath(daPath);
-  const resp = await fetch(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
+  const resp = await fetchWithRetry(`${HLX_ADMIN}/live/${org}/${repo}/${BRANCH}${contentPath}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -126,7 +127,7 @@ export async function triggerUnpublish(daPath: string, token: string): Promise<v
 
 export async function deleteDocument(daPath: string, token: string): Promise<void> {
   const fullpath = `${DA_API}/source${daPath}${daPath.endsWith('.html') ? '' : '.html'}`;
-  const resp = await fetch(fullpath, {
+  const resp = await fetchWithRetry(fullpath, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   });
@@ -287,7 +288,7 @@ async function runBulkStatusChunk(
   token: string,
 ): Promise<Map<string, PageStatus>> {
   // 1. Start the async bulk status job for these paths.
-  const startResp = await fetch(`${HLX_ADMIN}/status/${org}/${repo}/${BRANCH}/*`, {
+  const startResp = await fetchWithRetry(`${HLX_ADMIN}/status/${org}/${repo}/${BRANCH}/*`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({ paths: contentPaths, select: ['edit', 'preview', 'live'], forceAsync: true }),
@@ -302,7 +303,7 @@ async function runBulkStatusChunk(
   let stopped = false;
   for (let attempt = 0; attempt < JOB_POLL_MAX && !stopped; attempt++) {
     await sleep(JOB_POLL_MS);
-    const jResp = await fetch(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
+    const jResp = await fetchWithRetry(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
     if (!jResp.ok) throw new Error(`bulk status poll: ${jResp.status}`);
     const jData = await jResp.json() as { state?: string };
     stopped = jData.state === 'stopped' || jData.state === 'completed';
@@ -314,7 +315,7 @@ async function runBulkStatusChunk(
   // (⇒ previewed), NOT `{ status: 200 }`. Two guards force a fallback to the reliable HEAD probe
   // rather than silently reporting Draft: a path-key mismatch (keys don't match what we requested)
   // and a field mismatch (no resource carries any known lifecycle timestamp — i.e. shape changed).
-  const dResp = await fetch(`${jobUrl}/details`, { headers: { Authorization: `Bearer ${token}` } });
+  const dResp = await fetchWithRetry(`${jobUrl}/details`, { headers: { Authorization: `Bearer ${token}` } });
   if (!dResp.ok) throw new Error(`bulk status details: ${dResp.status}`);
   const details = await dResp.json() as { data?: { resources?: unknown }; resources?: unknown };
   const resources = details.data?.resources ?? details.resources;
