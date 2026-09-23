@@ -108,11 +108,34 @@ export interface DaListItem {
 export async function listDirectory(dirPath: string): Promise<DaListItem[]> {
   const t = getToken();
   if (!t) throw new Error('DA token not set; set VITE_DA_TOKEN or run from DA.live');
-  const resp = await fetchWithRetry(`${DA_API}/list${dirPath}`, {
-    headers: { Authorization: `Bearer ${t}` },
-  });
-  if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
-  return resp.json() as Promise<DaListItem[]>;
+  // The DA /list API lists ~1000 entries per folder at a time, returning a `da-continuation-token`
+  // response header when the folder listing is truncated. Follow it until the whole folder is read —
+  // otherwise a folder with >1000 direct children is silently cut to its first page.
+  const items: DaListItem[] = [];
+  let continuationToken: string | null = null;
+  for (let guard = 0; guard < 1_000_000; guard++) {
+    const headers: Record<string, string> = { Authorization: `Bearer ${t}` };
+    if (continuationToken) headers['da-continuation-token'] = continuationToken;
+    const resp = await fetchWithRetry(`${DA_API}/list${dirPath}`, { headers });
+    if (!resp.ok) throw new Error(`${resp.status}: ${await resp.text()}`);
+    const pageItems = await resp.json() as DaListItem[];
+    items.push(...pageItems);
+    continuationToken = resp.headers.get('da-continuation-token');
+    if (!continuationToken) break;
+  }
+  return items;
+}
+
+/**
+ * List a directory and return the set of existing HTML document paths in it (leading-slash, no
+ * extension) — the form a candidate output path can be tested against with `.has(path)`. Filters to
+ * `ext === 'html'` so it matches `docExists`'s `slug.html` probe exactly (sub-directories and
+ * non-HTML siblings are excluded). `listDirectory` is all-or-nothing, so callers get either a
+ * complete set or an exception to route to a per-path fallback.
+ */
+export async function listDirDocPaths(dirPath: string): Promise<Set<string>> {
+  const items = await listDirectory(dirPath);
+  return new Set(items.filter((i) => i.ext === 'html').map((i) => i.path));
 }
 
 export interface DirectoryCheckResult {

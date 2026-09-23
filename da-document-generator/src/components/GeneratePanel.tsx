@@ -1,8 +1,8 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
 import type { RowResult, RowStage } from '../types';
 import type { DaDocumentActions } from '../hooks/useDaDocumentActions';
-import { docExists } from '../api/daApi';
-import { runBatch } from '../lib/concurrency';
+import { docExists, listDirDocPaths } from '../api/daApi';
+import { runBatch, DEFAULT_CONCURRENCY, EXISTENCE_CHECK_CONCURRENCY } from '../lib/concurrency';
 import ConfirmModal from './ConfirmModal';
 import {
   GeneratePill,
@@ -76,6 +76,7 @@ export default function GeneratePanel({
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [existenceStatus, setExistenceStatus] = useState<Record<string, ExistenceCheck>>({});
   const checkedPaths = useRef<Set<string>>(new Set());
+  const dirListCache = useRef<Map<string, Set<string>>>(new Map());
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
 
@@ -98,14 +99,45 @@ export default function GeneratePanel({
       for (const pr of toCheck) next[pr.path] = 'checking';
       return next;
     });
-    void runBatch(toCheck, async (pr) => {
+    // Group candidates by parent directory and resolve existence with one `/list` per directory
+    // (from an in-memory set) instead of one HEAD per document; a listing that fails routes just
+    // that directory's candidates to the per-path HEAD fallback.
+    const byDir = new Map<string, string[]>();
+    for (const pr of toCheck) {
+      const dir = pr.path.slice(0, pr.path.lastIndexOf('/'));
+      const bucket = byDir.get(dir);
+      if (bucket) bucket.push(pr.path);
+      else byDir.set(dir, [pr.path]);
+    }
+
+    const resolveFromSet = (paths: string[], existing: Set<string>) =>
+      setExistenceStatus((prev) => {
+        const next = { ...prev };
+        for (const p of paths) next[p] = existing.has(p) ? 'exists' : 'not-found';
+        return next;
+      });
+
+    const headFallback = (paths: string[]) =>
+      runBatch(paths, async (p) => {
+        try {
+          const exists = await docExists(p);
+          setExistenceStatus((prev) => ({ ...prev, [p]: exists ? 'exists' : 'not-found' }));
+        } catch {
+          setExistenceStatus((prev) => ({ ...prev, [p]: 'error' }));
+        }
+      }, EXISTENCE_CHECK_CONCURRENCY);
+
+    void runBatch([...byDir.entries()], async ([dir, paths]) => {
+      const cached = dirListCache.current.get(dir);
+      if (cached) { resolveFromSet(paths, cached); return; }
       try {
-        const exists = await docExists(pr.path);
-        setExistenceStatus((prev) => ({ ...prev, [pr.path]: exists ? 'exists' : 'not-found' }));
+        const existing = await listDirDocPaths(dir);
+        dirListCache.current.set(dir, existing); // cache only after a fully successful listing
+        resolveFromSet(paths, existing);
       } catch {
-        setExistenceStatus((prev) => ({ ...prev, [pr.path]: 'error' }));
+        await headFallback(paths);
       }
-    });
+    }, DEFAULT_CONCURRENCY);
   }, [previewRows, results.length]);
 
   // Close the export dropdown on an outside click.
@@ -216,6 +248,7 @@ export default function GeneratePanel({
     onReset();
     setExistenceStatus({});
     checkedPaths.current.clear();
+    dirListCache.current.clear();
     setBulkOp('idle');
     setFrozen(null);
   }

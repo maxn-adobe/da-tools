@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { CsvRow, OutputState, RowResult, TemplateState } from './types';
-import { cat, validateTemplate, docExists, postDoc, createDocVersion, getToken } from './api/daApi';
+import { cat, validateTemplate, docExists, listDirDocPaths, postDoc, createDocVersion, getToken } from './api/daApi';
 import { runBatch } from './lib/concurrency';
 import { buildBakedDoc, resolveOutputPath, runBakeQa } from './lib/buildDoc';
 import { useDaDocumentActions } from './hooks/useDaDocumentActions';
@@ -96,12 +96,24 @@ export default function App() {
     const patch = (id: string, changes: Partial<RowResult>) =>
       setResults((prev) => prev.map((r) => (r.id === id ? { ...r, ...changes } : r)));
 
+    // Resolve which output paths already exist with a single directory listing per distinct output
+    // folder (instead of one HEAD per doc), then decide the pre-generation version backup from that.
+    const existingByDir = new Map<string, Set<string>>();
+    const dirsToList = [...new Set(work.map((w) => w.path.slice(0, w.path.lastIndexOf('/'))))];
+    await runBatch(dirsToList, async (dir) => {
+      try { existingByDir.set(dir, await listDirDocPaths(dir)); } catch { /* fall back to per-doc docExists below */ }
+    });
+    const alreadyExists = (p: string): Promise<boolean> => {
+      const set = existingByDir.get(p.slice(0, p.lastIndexOf('/')));
+      return set ? Promise.resolve(set.has(p)) : docExists(p).catch(() => false);
+    };
+
     await runBatch(work, async (w) => {
       patch(w.id, { stage: 'generating' });
       try {
         const html = buildBakedDoc(tmplHtml, w.row, { generatedBatch });
         const qa = runBakeQa(html);
-        if (await docExists(w.path)) {
+        if (await alreadyExists(w.path)) {
           try { await createDocVersion(w.path, 'Pre-generation backup'); } catch { /* proceed */ }
         }
         const res = await postDoc(w.path, html);

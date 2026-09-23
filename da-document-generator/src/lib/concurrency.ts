@@ -8,6 +8,11 @@ export const CRAWL_CONCURRENCY = 6;
 // status checks run at a gentler concurrency and retry on 429 (see checkPageStatus).
 export const STATUS_CONCURRENCY = 4;
 
+// Pre-generation existing-document check. Directory listing is the primary path (one request per
+// output dir); this bounds the per-path HEAD fallback used only when a listing fails. DA's source
+// API tolerates far more than the AEM admin API, so probe well above DEFAULT_CONCURRENCY.
+export const EXISTENCE_CHECK_CONCURRENCY = 20;
+
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export async function runBatch<T>(
