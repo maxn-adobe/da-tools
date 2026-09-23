@@ -34,15 +34,12 @@ export function PreviewPill({ result, onPreview }: { result: RowResult; onPrevie
 export function PublishPill({
   result,
   onPublish,
-  onUnpublish,
 }: {
   result: RowResult;
   onPublish: () => void;
-  onUnpublish: () => void;
 }) {
   const { stage, liveUrl } = result;
   if (stage === 'publishing') return <span className="text-green-500 font-medium">Publishing…</span>;
-  if (stage === 'unpublishing') return <span className="text-orange-500 font-medium">Unpublishing…</span>;
   if (stage === 'unpublished') {
     return (
       <button type="button" onClick={onPublish}
@@ -53,16 +50,10 @@ export function PublishPill({
   }
   if (liveUrl) {
     return (
-      <div className="flex items-center gap-2 whitespace-nowrap">
-        <a href={liveUrl} target="_blank" rel="noopener noreferrer" className="text-green-700 font-medium hover:underline inline-flex items-center gap-1">
-          ✓ aem.live
-          <ExternalLinkIcon />
-        </a>
-        <button type="button" onClick={onUnpublish}
-          className="text-xs text-red-500 hover:text-red-700 font-medium transition-colors cursor-pointer">
-          Unpublish
-        </button>
-      </div>
+      <a href={liveUrl} target="_blank" rel="noopener noreferrer" className="text-green-700 font-medium hover:underline inline-flex items-center gap-1">
+        ✓ aem.live
+        <ExternalLinkIcon />
+      </a>
     );
   }
   if (stage === 'previewed') {
@@ -70,6 +61,22 @@ export function PublishPill({
       <button type="button" onClick={onPublish}
         className="text-xs text-green-600 hover:text-green-800 font-medium transition-colors cursor-pointer">
         Publish
+      </button>
+    );
+  }
+  return <span className="text-gray-300">—</span>;
+}
+
+// Unpublish lives in its own table column. The button shows only while the doc is live; otherwise
+// (draft / previewed / unpublished / error) the cell collapses to a gray dash, mirroring PreviewPill.
+export function UnpublishPill({ result, onUnpublish }: { result: RowResult; onUnpublish: () => void }) {
+  const { stage, liveUrl } = result;
+  if (stage === 'unpublishing') return <span className="text-orange-500 font-medium">Unpublishing…</span>;
+  if (liveUrl) {
+    return (
+      <button type="button" onClick={onUnpublish}
+        className="text-xs text-red-500 hover:text-red-700 font-medium transition-colors cursor-pointer">
+        Unpublish
       </button>
     );
   }

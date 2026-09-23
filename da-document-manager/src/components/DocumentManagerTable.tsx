@@ -2,7 +2,7 @@ import { memo, useRef } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { DocRow } from '../types';
 import type { DaDocumentActions } from '../hooks/useDaDocumentActions';
-import { PreviewPill, PublishPill, DeleteButton, ExternalLinkIcon } from './StatusCells';
+import { PreviewPill, PublishPill, UnpublishPill, DeleteButton, ExternalLinkIcon } from './StatusCells';
 
 export type SortField = 'path' | 'lastUpdated' | 'status';
 
@@ -26,8 +26,8 @@ const SORT_COLUMNS: { field: SortField; label: string }[] = [
 
 // Fixed column widths shared by the header and every row so a single CSS grid template keeps them
 // aligned while the body is virtualized. Order: checkbox, Path, Last updated, Status, Preview,
-// Publish, Delete. Deriving the template + total width from one array keeps them from drifting.
-const COLUMN_WIDTHS = [44, 560, 210, 120, 120, 260, 90];
+// Publish, Unpublish, Delete. Deriving the template + total width from one array keeps them from drifting.
+const COLUMN_WIDTHS = [44, 560, 210, 120, 120, 120, 120, 90];
 const GRID_TEMPLATE = COLUMN_WIDTHS.map((w) => `${w}px`).join(' ');
 const TOTAL_WIDTH = COLUMN_WIDTHS.reduce((a, b) => a + b, 0);
 
@@ -98,6 +98,7 @@ export default function DocumentManagerTable({
           ))}
           <div className="px-3 py-2 font-medium text-gray-600">Preview</div>
           <div className="px-3 py-2 font-medium text-gray-600">Publish</div>
+          <div className="px-3 py-2 font-medium text-gray-600">Unpublish</div>
           <div className="px-3 py-2 font-medium text-gray-600">Delete</div>
         </div>
 
@@ -183,7 +184,10 @@ const DocumentRow = memo(function DocumentRow({
         <PreviewPill result={doc} onPreview={() => actions.previewRow(doc)} />
       </div>
       <div className="px-3 py-2">
-        <PublishPill result={doc} onPublish={() => actions.publishRow(doc)} onUnpublish={() => actions.unpublishRow(doc)} />
+        <PublishPill result={doc} onPublish={() => actions.publishRow(doc)} />
+      </div>
+      <div className="px-3 py-2">
+        <UnpublishPill result={doc} onUnpublish={() => actions.unpublishRow(doc)} />
       </div>
       <div className="px-3 py-2">
         <DeleteButton result={doc} onDelete={() => actions.deleteRow(doc)} />

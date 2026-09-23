@@ -8,6 +8,7 @@ import {
   GeneratePill,
   PreviewPill,
   PublishPill,
+  UnpublishPill,
   QaIssueBadge,
   ExternalLinkIcon,
   ExistenceBadge,
@@ -487,6 +488,7 @@ export default function GeneratePanel({
                 <th className="px-3 py-2 font-medium">Doc</th>
                 <th className="px-3 py-2 font-medium">Preview</th>
                 <th className="px-3 py-2 font-medium">Publish</th>
+                <th className="px-3 py-2 font-medium">Unpublish</th>
                 <th className="px-3 py-2 font-medium">QA</th>
               </tr>
             </thead>
@@ -513,6 +515,7 @@ export default function GeneratePanel({
                           <ExistenceBadge status={existenceStatus[pr.path]} />
                         </span>
                       </td>
+                      <td className="px-3 py-1.5 text-xs text-gray-300">—</td>
                       <td className="px-3 py-1.5 text-xs text-gray-300">—</td>
                       <td className="px-3 py-1.5 text-xs text-gray-300">—</td>
                       <td className="px-3 py-1.5 text-xs text-gray-300">—</td>
@@ -548,11 +551,10 @@ export default function GeneratePanel({
                           <PreviewPill result={r} onPreview={() => actions.previewRow(r)} />
                         </td>
                         <td className="px-3 py-1.5">
-                          <PublishPill
-                            result={r}
-                            onPublish={() => actions.publishRow(r)}
-                            onUnpublish={() => actions.unpublishRow(r)}
-                          />
+                          <PublishPill result={r} onPublish={() => actions.publishRow(r)} />
+                        </td>
+                        <td className="px-3 py-1.5">
+                          <UnpublishPill result={r} onUnpublish={() => actions.unpublishRow(r)} />
                         </td>
                         <td className="px-3 py-1.5">
                           <QaIssueBadge qa={r.qa} expanded={expanded.has(r.id)} onToggle={() => toggle(r.id)} />
@@ -560,7 +562,7 @@ export default function GeneratePanel({
                       </tr>
                       {expanded.has(r.id) && r.qa && (
                         <tr className="bg-gray-50">
-                          <td colSpan={6} className="px-3 py-2">
+                          <td colSpan={7} className="px-3 py-2">
                             <ul className="flex flex-col gap-1 text-xs">
                               {r.qa.checks.map((c) => (
                                 <li key={c.id} className={c.pass ? 'text-green-700' : 'text-amber-700'}>

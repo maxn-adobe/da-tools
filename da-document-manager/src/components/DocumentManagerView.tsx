@@ -5,6 +5,7 @@ import type { CrawlError } from '../api/crawl';
 import { useDaDocumentActions, type BulkProgressOp } from '../hooks/useDaDocumentActions';
 import ConfirmModal from './ConfirmModal';
 import DocumentManagerTable, { type SortField } from './DocumentManagerTable';
+import { ExternalLinkIcon } from './StatusCells';
 import type { DocRow } from '../types';
 
 const ALL = 'all';
@@ -71,8 +72,14 @@ export default function DocumentManagerView() {
   const [bulkProgress, setBulkProgress] = useState<{ op: BulkProgressOp; done: number; total: number } | null>(null);
   const [dismissedErrors, setDismissedErrors] = useState(false);
   const [hasScanned, setHasScanned] = useState(false);
-  const [pathError, setPathError] = useState<string | null>(null);
-  const [validating, setValidating] = useState(false);
+  // Live, debounced validation of the directory input — drives the Valid/Invalid feedback card and
+  // gates the Scan button. `loading` is intentionally NOT part of `anyBusy` (it fires on every
+  // keystroke and must not lock the whole view while the user is still typing).
+  const [dirCheck, setDirCheck] = useState<{ loading: boolean; valid: boolean; error: string | null }>({
+    loading: false,
+    valid: false,
+    error: null,
+  });
   const [showExportMenu, setShowExportMenu] = useState(false);
   const [showPathHints, setShowPathHints] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
@@ -86,31 +93,43 @@ export default function DocumentManagerView() {
 
   // Strict single-operation lock: while any long op runs (scan, status recheck, batch load, or a
   // bulk action), every trigger is disabled so two operations can never overlap.
-  const anyBusy = scanning || validating || batchDataState === 'loading' || busy;
+  const anyBusy = scanning || batchDataState === 'loading' || busy;
+
+  // Live-validate the directory input (debounced) so the user gets Valid/Invalid feedback as they
+  // type, mirroring the PDP/output-directory pattern. A format check runs first (no network call for
+  // an obviously-malformed path); otherwise `checkDirectoryExists` confirms the folder exists. The
+  // `cancelled` flag drops stale responses. Runs on mount too, validating the prefilled default.
+  useEffect(() => {
+    const trimmed = rootPathInput.trim();
+    if (!trimmed) {
+      setDirCheck({ loading: false, valid: false, error: null });
+      return;
+    }
+    const segments = trimmed.split('/').filter(Boolean);
+    if (!trimmed.startsWith('/') || segments.length < 2) {
+      setDirCheck({ loading: false, valid: false, error: 'Enter a full DA path: /org/repo/optional/subpath' });
+      return;
+    }
+    let cancelled = false;
+    setDirCheck((d) => ({ ...d, loading: true, error: null }));
+    const timer = setTimeout(async () => {
+      const res = await checkDirectoryExists(trimmed);
+      if (cancelled) return;
+      setDirCheck({ loading: false, valid: res.valid, error: res.error ?? null });
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [rootPathInput]);
 
   // Cancel any in-flight manual op (recheck / batch load) when the view unmounts (navigate away),
   // so its callbacks never fire on an unmounted component. The scan is cancelled by its own cleanup.
   useEffect(() => () => { opIdRef.current += 1; }, []);
 
-  async function handleScan() {
-    if (anyBusy) return;
-    const trimmed = rootPathInput.trim();
-    if (!trimmed) return;
-    // A DA path is /org/repo[/subpath…]; org + repo are required (parseDAPath derives them).
-    const segments = trimmed.split('/').filter(Boolean);
-    if (!trimmed.startsWith('/') || segments.length < 2) {
-      setPathError('Enter a full DA path: /org/repo/optional/subpath');
-      return;
-    }
-    setPathError(null);
-    setValidating(true);
-    const check = await checkDirectoryExists(trimmed);
-    setValidating(false);
-    if (!check.valid) {
-      setPathError(check.error ?? 'Could not read that directory');
-      return;
-    }
-    setRootPath(trimmed);
+  function handleScan() {
+    // Validity is owned by the debounced effect above (which also gates the Scan button); scanning is
+    // blocked unless the live check passed, so no re-check is needed here.
+    if (anyBusy || !dirCheck.valid) return;
+    setShowPathHints(false);
+    setRootPath(rootPathInput.trim());
     setScanNonce((n) => n + 1);
   }
 
@@ -381,21 +400,7 @@ export default function DocumentManagerView() {
   return (
     <div className="bg-white rounded-2xl border border-gray-200 p-6 flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <div className="flex items-center gap-1.5">
-          <label htmlFor="dm-root-path" className="text-xs font-medium text-gray-600">Directory to scan</label>
-          <button
-            type="button"
-            onClick={() => setShowPathHints((p) => !p)}
-            aria-label="Show example paths"
-            aria-expanded={showPathHints}
-            title="Show example paths"
-            className="text-gray-400 hover:text-gray-600 cursor-pointer transition-colors"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-              <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
-            </svg>
-          </button>
-        </div>
+        <label htmlFor="dm-root-path" className="text-xs font-medium text-gray-600">Directory to scan</label>
 
         <div className="flex items-center gap-3 flex-wrap">
           <input
@@ -410,10 +415,10 @@ export default function DocumentManagerView() {
           <button
             type="button"
             onClick={() => void handleScan()}
-            disabled={anyBusy || !rootPathInput.trim()}
+            disabled={anyBusy || dirCheck.loading || !dirCheck.valid}
             className="px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer transition-colors"
           >
-            {validating ? 'Checking…' : scanning ? 'Scanning…' : rootPath === rootPathInput.trim() && hasScanned ? 'Rescan' : 'Scan'}
+            {scanning ? 'Scanning…' : rootPath === rootPathInput.trim() && hasScanned ? 'Rescan' : 'Scan'}
           </button>
           {hasScanned && !scanning && docs.length > 0 && (
             <button
@@ -430,19 +435,59 @@ export default function DocumentManagerView() {
           )}
         </div>
 
-        {showPathHints && (
-          <div className="flex flex-col gap-0.5 text-xs text-gray-500">
-            <span>You can scan any DA directory, including other repos. Examples:</span>
-            <span className="font-mono text-gray-400">/adobecom/da-express-milo/express/print</span>
-            <span className="font-mono text-gray-400">/adobecom/da-express-milo/drafts/teammate</span>
-            <span className="font-mono text-gray-400">/adobecom/milo/drafts/maxn <span className="font-sans">(different repo)</span></span>
+        {/* Live directory-validation feedback (debounced) — mirrors the PDP/output-directory pattern. */}
+        {dirCheck.loading && <p className="text-xs text-gray-400">Validating…</p>}
+        {!dirCheck.loading && (dirCheck.valid || dirCheck.error) && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                dirCheck.valid ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              }`}
+            >
+              {dirCheck.valid ? 'Valid' : 'Invalid'}
+            </span>
+            {dirCheck.valid ? (
+              <a
+                href={`https://da.live/#${rootPathInput.trim()}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 break-all font-mono text-xs text-gray-500 hover:text-blue-600"
+              >
+                {rootPathInput.trim()}
+                <ExternalLinkIcon />
+              </a>
+            ) : (
+              <span className="text-xs text-red-600">{dirCheck.error}</span>
+            )}
           </div>
         )}
+
+        {/* Example paths — info icon on the left, examples to its right when toggled. */}
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            onClick={() => setShowPathHints((p) => !p)}
+            aria-label="Show example paths"
+            aria-expanded={showPathHints}
+            title="Show example paths"
+            className={`shrink-0 cursor-pointer transition-colors ${showPathHints ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+              <path fillRule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clipRule="evenodd" />
+            </svg>
+          </button>
+          {showPathHints && (
+            <div className="flex flex-col gap-0.5 text-xs text-gray-500">
+              <span>Examples:</span>
+              <span className="font-mono text-gray-400">/adobecom/da-express-milo/express/print/business-card</span>
+              <span className="font-mono text-gray-400">/adobecom/da-dc/acrobat/online</span>
+              <span className="font-mono text-gray-400">/adobecom/da-bacom/ca</span>
+            </div>
+          )}
+        </div>
       </div>
 
-      {pathError && <p className="text-sm text-red-600">{pathError}</p>}
-
-      {!hasScanned && !scanning && !pathError && (
+      {!hasScanned && !scanning && (
         <p className="text-sm text-gray-500">Enter a DA folder path above and click Scan to load its documents.</p>
       )}
 
