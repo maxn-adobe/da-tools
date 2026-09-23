@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import type { RowResult, RowStage } from '../types';
-import type { DaDocumentActions } from '../hooks/useDaDocumentActions';
+import { useDaDocumentActions, type BulkProgressOp, type PublishQaConfig } from '../hooks/useDaDocumentActions';
 import { docExists, listDirDocPaths } from '../api/daApi';
 import { runBatch, DEFAULT_CONCURRENCY, EXISTENCE_CHECK_CONCURRENCY } from '../lib/concurrency';
 import ConfirmModal from './ConfirmModal';
@@ -28,7 +28,9 @@ interface Props {
   onGenerate: () => void;
   onReset: () => void;
   results: RowResult[];
-  actions: DaDocumentActions<RowResult>;
+  setResults: Dispatch<SetStateAction<RowResult[]>>;
+  generateConcurrency: number;
+  onGenerateConcurrencyChange: (n: number) => void;
 }
 
 // Bulk operations other than generation (which App drives via the `generating` prop).
@@ -65,7 +67,9 @@ export default function GeneratePanel({
   onGenerate,
   onReset,
   results,
-  actions,
+  setResults,
+  generateConcurrency,
+  onGenerateConcurrencyChange,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [bulkOp, setBulkOp] = useState<BulkOp>('idle');
@@ -79,6 +83,14 @@ export default function GeneratePanel({
   const dirListCache = useRef<Map<string, Set<string>>>(new Map());
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
+  const [bulkProgress, setBulkProgress] = useState<{ op: BulkProgressOp; done: number; total: number } | null>(null);
+  const [publishQaMode, setPublishQaMode] = useState<PublishQaConfig>({ mode: 'off' });
+
+  const actions = useDaDocumentActions<RowResult>(setResults, {
+    afterDelete: () => undefined,
+    onBulkProgress: (op, done, total) => setBulkProgress({ op, done, total }),
+    publishQaConfig: publishQaMode,
+  });
 
   // Before generation we show a muted preview of the rows that will be generated (their resolved
   // output paths); once generation starts, `results` drives the same table with live pills.
@@ -226,9 +238,11 @@ export default function GeneratePanel({
     });
     bulkTargets.current = new Set(targets.map((t) => t.id));
     setBulkTotal(targets.length);
+    setBulkProgress(null);
     setBulkOp(op);
     await fn(targets);
     setBulkOp('idle');
+    setBulkProgress(null);
     setFrozen(null);
   }
 
@@ -250,6 +264,7 @@ export default function GeneratePanel({
     checkedPaths.current.clear();
     dirListCache.current.clear();
     setBulkOp('idle');
+    setBulkProgress(null);
     setFrozen(null);
   }
 
@@ -286,6 +301,10 @@ export default function GeneratePanel({
   const btnBase =
     'rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60';
 
+  // Bulk-op "X / N": preview/publish/unpublish are jobs (driven by the job's own reported progress);
+  // delete is still a per-row fan-out (bulkProgress stays null → derive from row stages via bulkDone).
+  const progressText = bulkProgress ? `${bulkProgress.done} / ${bulkProgress.total}` : `${bulkDone()} / ${bulkTotal}`;
+
   return (
     <section className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-3">
@@ -310,6 +329,19 @@ export default function GeneratePanel({
             : `Generate ${selectedCount} ${selectedCount === 1 ? 'row' : 'rows'}`}
         </button>
 
+        <label className="flex items-center gap-1.5 text-xs text-gray-600" title="How many document writes run in parallel. Higher is faster but may hit DA rate limits; retry absorbs transient throttling.">
+          Write concurrency
+          <input
+            type="number"
+            min={1}
+            max={24}
+            value={generateConcurrency}
+            disabled={running}
+            onChange={(e) => onGenerateConcurrencyChange(Math.max(1, Math.min(24, Number(e.target.value) || 1)))}
+            className="h-7 w-14 rounded-lg border border-gray-300 px-1.5 text-xs disabled:opacity-50"
+          />
+        </label>
+
         {showPreviewBtn && (
           <button
             type="button"
@@ -318,7 +350,7 @@ export default function GeneratePanel({
             className={`${btnBase} bg-indigo-600 hover:bg-indigo-700`}
           >
             {bulkOp === 'previewing'
-              ? `Previewing… ${bulkDone()} / ${bulkTotal}`
+              ? `Previewing… ${progressText}`
               : `Preview ${counts.previewable} document${counts.previewable === 1 ? '' : 's'}`}
           </button>
         )}
@@ -331,9 +363,27 @@ export default function GeneratePanel({
             className={`${btnBase} bg-green-600 hover:bg-green-700`}
           >
             {bulkOp === 'publishing'
-              ? `Publishing… ${bulkDone()} / ${bulkTotal}`
+              ? `Publishing… ${progressText}`
               : `Publish ${counts.publishable} document${counts.publishable === 1 ? '' : 's'}`}
           </button>
+        )}
+
+        {showPublishBtn && (
+          <label className="flex items-center gap-1.5 text-xs text-gray-600" title="Run page QA on published pages after publish. Sampling avoids fetching every live page at scale.">
+            QA
+            <select
+              value={publishQaMode.mode}
+              onChange={(e) => {
+                const m = e.target.value as PublishQaConfig['mode'];
+                setPublishQaMode(m === 'sample' ? { mode: 'sample', sampleSize: 10 } : { mode: m });
+              }}
+              className="h-7 cursor-pointer rounded-lg border border-gray-300 px-1.5 text-xs"
+            >
+              <option value="off">Off</option>
+              <option value="sample">Sample 10</option>
+              <option value="all">All</option>
+            </select>
+          </label>
         )}
 
         {showUnpublishBtn && (
@@ -344,7 +394,7 @@ export default function GeneratePanel({
             className={`${btnBase} bg-red-600 hover:bg-red-700`}
           >
             {bulkOp === 'unpublishing'
-              ? `Unpublishing… ${bulkDone()} / ${bulkTotal}`
+              ? `Unpublishing… ${progressText}`
               : `Unpublish ${counts.published} documents`}
           </button>
         )}
@@ -357,7 +407,7 @@ export default function GeneratePanel({
             className={`${btnBase} bg-red-700 hover:bg-red-800`}
           >
             {bulkOp === 'deleting'
-              ? `Deleting… ${bulkDone()} / ${bulkTotal}`
+              ? `Deleting… ${progressText}`
               : `Delete ${counts.deletable} documents`}
           </button>
         )}

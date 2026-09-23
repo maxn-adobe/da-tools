@@ -322,3 +322,342 @@ export async function batchCheckStatus(
   return results;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Scalable status resolution: bulk status job (primary) → authless CDN HEAD (fallback).
+//
+// Never GETs admin.hlx.page/status per document — that endpoint is rate-limited to ~10 req/s per
+// project and so mass-fails a large batch. The bulk job statuses the whole set in one async job; if
+// it's unavailable or returns an unrecognized shape, we fall back to bodyless/authless HEAD probes
+// of the live CDN (200 req/s host limit), which reliably determine "published". This is the
+// reconciliation authority the bulk preview/publish jobs below lean on.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BULK_STATUS_CHUNK = 1000; // paths per bulk status job (primary pass — fast, few jobs)
+const RECONCILE_CHUNK = 100;    // smaller batch for re-running dropped paths (the job drops fewer when small)
+const RECONCILE_ATTEMPTS = 2;   // re-run the missing diff this many times before the HEAD net
+const JOB_POLL_MS = 1000;       // delay between job-status polls
+const JOB_POLL_MAX = 180;       // give up on a status job after ~3 min → fall back
+const HEAD_BATCH_SIZE = 20;     // paths probed in parallel per HEAD batch
+const HEAD_BATCH_MS = 300;      // min ms per HEAD batch (paces well under the CDN's 200 req/s)
+
+type StatusProgress = (done: number, total: number) => void;
+
+export async function resolveStatuses(
+  paths: string[],
+  token: string,
+  onProgress?: StatusProgress,
+): Promise<Map<string, PageStatus>> {
+  if (paths.length === 0) return new Map();
+  try {
+    return await bulkResolveStatus(paths, token, onProgress);
+  } catch {
+    return await headResolveStatus(paths, onProgress);
+  }
+}
+
+/** Authless, bodyless HEAD probe of the live CDN: live = 200. The preview tier is auth-gated, so a
+ *  not-live doc reads as Draft in this fallback. Deliberately fail-fast (no retry). */
+export async function headResolveStatus(
+  paths: string[],
+  onProgress?: StatusProgress,
+): Promise<Map<string, PageStatus>> {
+  const result = new Map<string, PageStatus>();
+  for (let i = 0; i < paths.length; i += HEAD_BATCH_SIZE) {
+    const batchStart = Date.now();
+    const batch = paths.slice(i, i + HEAD_BATCH_SIZE);
+    await Promise.all(batch.map(async (p) => {
+      let live = false;
+      try {
+        const resp = await fetch(daPathToLiveUrl(p), { method: 'HEAD' });
+        live = resp.ok;
+      } catch { /* CDN unreachable → treat as not published */ }
+      result.set(p, { live, preview: false, ok: true });
+    }));
+    if (onProgress) onProgress(Math.min(i + batch.length, paths.length), paths.length);
+    const wait = HEAD_BATCH_MS - (Date.now() - batchStart);
+    if (wait > 0 && i + HEAD_BATCH_SIZE < paths.length) await sleep(wait);
+  }
+  return result;
+}
+
+export async function bulkResolveStatus(
+  paths: string[],
+  token: string,
+  onProgress?: StatusProgress,
+): Promise<Map<string, PageStatus>> {
+  const { org, repo } = parseDAPath(paths[0]);
+  const result = new Map<string, PageStatus>();
+  const report = () => onProgress?.(Math.min(result.size, paths.length), paths.length);
+
+  async function runPass(daPaths: string[], chunkSize: number): Promise<void> {
+    for (let i = 0; i < daPaths.length; i += chunkSize) {
+      const chunk = daPaths.slice(i, i + chunkSize);
+      const contentToDa = new Map<string, string>();
+      const contentPaths = chunk.map((p) => {
+        const cp = parseDAPath(p).contentPath;
+        contentToDa.set(cp, p);
+        return cp;
+      });
+      const statuses = await runBulkStatusChunk(org, repo, contentPaths, token);
+      for (const [cp, st] of statuses) {
+        const da = contentToDa.get(cp);
+        if (da) result.set(da, st);
+      }
+      report();
+    }
+  }
+
+  await runPass(paths, BULK_STATUS_CHUNK);
+
+  for (let attempt = 0; attempt < RECONCILE_ATTEMPTS; attempt++) {
+    const missing = paths.filter((p) => !result.has(p));
+    if (missing.length === 0) break;
+    try {
+      await runPass(missing, RECONCILE_CHUNK);
+    } catch {
+      break;
+    }
+  }
+
+  const stillMissing = paths.filter((p) => !result.has(p));
+  if (stillMissing.length > 0) {
+    try {
+      const headStatuses = await headResolveStatus(stillMissing);
+      for (const [p, st] of headStatuses) result.set(p, st);
+      report();
+    } catch { /* fall through to Unknown */ }
+  }
+
+  for (const p of paths) if (!result.has(p)) result.set(p, { live: false, preview: false, ok: false });
+  return result;
+}
+
+type BulkResource = {
+  path?: string; webPath?: string; resourcePath?: string;
+  sourceLastModified?: string; previewLastModified?: string; publishLastModified?: string;
+};
+
+async function runBulkStatusChunk(
+  org: string,
+  repo: string,
+  contentPaths: string[],
+  token: string,
+): Promise<Map<string, PageStatus>> {
+  const startResp = await fetchWithRetry(`${HLX_ADMIN}/status/${org}/${repo}/${BRANCH}/*`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paths: contentPaths, select: ['edit', 'preview', 'live'], forceAsync: true }),
+  });
+  if (!startResp.ok) throw new Error(`bulk status start: ${startResp.status}`);
+  const startData = await startResp.json() as { job?: { name?: string }; links?: { self?: string } };
+  const jobName = startData.job?.name ?? startData.links?.self?.split('/').pop();
+  if (!jobName) throw new Error('bulk status: missing job name');
+
+  const jobUrl = `${HLX_ADMIN}/job/${org}/${repo}/${BRANCH}/status/${jobName}`;
+  let stopped = false;
+  for (let attempt = 0; attempt < JOB_POLL_MAX && !stopped; attempt++) {
+    await sleep(JOB_POLL_MS);
+    const jResp = await fetchWithRetry(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
+    if (!jResp.ok) throw new Error(`bulk status poll: ${jResp.status}`);
+    const jData = await jResp.json() as { state?: string };
+    stopped = jData.state === 'stopped' || jData.state === 'completed';
+  }
+  if (!stopped) throw new Error('bulk status: job did not finish in time');
+
+  const dResp = await fetchWithRetry(`${jobUrl}/details`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!dResp.ok) throw new Error(`bulk status details: ${dResp.status}`);
+  const details = await dResp.json() as { data?: { resources?: unknown }; resources?: unknown };
+  const resources = details.data?.resources ?? details.resources;
+  if (!Array.isArray(resources)) throw new Error('bulk status: unrecognized details shape');
+  const out = new Map<string, PageStatus>();
+  let recognizedShape = false;
+  for (const item of resources as BulkResource[]) {
+    const path = item.path ?? item.webPath ?? item.resourcePath;
+    if (!path) continue;
+    if (item.sourceLastModified || item.previewLastModified || item.publishLastModified) {
+      recognizedShape = true;
+    }
+    out.set(path, {
+      live: Boolean(item.publishLastModified),
+      preview: Boolean(item.previewLastModified),
+      ok: true,
+    });
+  }
+  if (resources.length > 0 && !recognizedShape) {
+    console.warn('bulk status: unrecognized resource shape, falling back to HEAD probe', resources[0]);
+    throw new Error('bulk status: unrecognized resource shape');
+  }
+  const matched = contentPaths.filter((cp) => out.has(cp)).length;
+  if (matched < contentPaths.length * 0.5) {
+    throw new Error(`bulk status: path-format mismatch (${matched}/${contentPaths.length})`);
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bulk preview / publish / unpublish via AEM Admin async JOBS (primary) → per-path fan-out (fallback).
+//
+// Replaces per-document POSTs to admin.hlx.page/preview|/live (rate-limited to ~10 req/s per project,
+// plus a CORS preflight per unique path), so a large preview/publish is otherwise very slow. One job
+// handles a whole chunk of paths in a single request + polls. The per-path result shape in a
+// preview/live job's /details is NOT publicly documented, so we do NOT trust it: after each job we
+// reconcile the true per-path outcome via resolveStatuses. progress.failed only gates whether a chunk
+// was "clean". Chunks run a few at a time (MUTATE_JOB_CONCURRENCY) — well under the 500-pending-jobs-
+// per-topic cap and the 10 req/s admin limit.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BULK_MUTATE_CHUNK = 500;    // paths per preview/publish job (smaller than status: these RENDER pages)
+const MUTATE_POLL_MAX = 300;      // give up on a mutate job after ~5 min → per-path fan-out
+const MUTATE_JOB_CONCURRENCY = 3; // bulk job chunks run this many at once (≤3 pending/topic ≪ 500 cap; ~3 polls/s ≪ 10 req/s)
+const JOB_404_GRACE = 3;          // tolerate a transient 404 on the first few polls (job not yet queryable)
+
+export interface BulkMutateOutcome {
+  succeeded: Set<string>;              // DA paths confirmed at the target tier
+  failed: Map<string, string>;         // DA path → reason (surfaced as row.error)
+  progress: { total: number; processed: number; failed: number };
+}
+
+type MutateTopic = 'preview' | 'live';
+
+// One chunk → one job. Returns how many paths the job reported failed. Throws (→ caller's per-path
+// fan-out) on start/poll failure or timeout. Never throws on /details (that shape is undocumented).
+async function runBulkMutateChunk(
+  org: string,
+  repo: string,
+  topic: MutateTopic,
+  contentPaths: string[],
+  token: string,
+  onProcessed: (processed: number, total: number) => void,
+  deleteOp: boolean,
+): Promise<{ failed: number }> {
+  const body: Record<string, unknown> = { paths: contentPaths, forceAsync: true };
+  if (deleteOp) body.delete = true;   // unpublish = POST /live/* with delete:true
+  const startResp = await fetchWithRetry(`${HLX_ADMIN}/${topic}/${org}/${repo}/${BRANCH}/*`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!startResp.ok) throw new Error(`bulk ${topic} start: ${startResp.status}`);
+  const startData = await startResp.json() as { job?: { name?: string; topic?: string }; links?: { self?: string } };
+  const jobName = startData.job?.name ?? startData.links?.self?.split('/').pop();
+  if (!jobName) throw new Error(`bulk ${topic}: missing job name`);
+
+  // The job's poll topic is NOT the start-path segment: a `/live/*` (publish) start is filed under
+  // topic "publish", not "live" — polling "live" 404s and drops the whole chunk to the slow fan-out.
+  // Preview happens to match ("preview"). Use the topic the start response actually reports.
+  const jobTopic = startData.job?.topic ?? topic;
+  const jobUrl = `${HLX_ADMIN}/job/${org}/${repo}/${BRANCH}/${jobTopic}/${jobName}`;
+  let stopped = false;
+  let failed = 0;
+  for (let attempt = 0; attempt < MUTATE_POLL_MAX && !stopped; attempt++) {
+    await sleep(JOB_POLL_MS);
+    const jResp = await fetchWithRetry(jobUrl, { headers: { Authorization: `Bearer ${token}` } });
+    // A freshly-created job can 404 for a moment before it's queryable; tolerate that briefly.
+    if (jResp.status === 404 && attempt < JOB_404_GRACE) continue;
+    if (!jResp.ok) throw new Error(`bulk ${topic} poll: ${jResp.status}`);
+    const jData = await jResp.json() as { state?: string; progress?: { total?: number; processed?: number; failed?: number } };
+    const p = jData.progress ?? {};
+    failed = p.failed ?? failed;
+    onProcessed(p.processed ?? 0, p.total ?? contentPaths.length);
+    stopped = jData.state === 'stopped' || jData.state === 'completed';
+  }
+  if (!stopped) throw new Error(`bulk ${topic}: job did not finish in time`);
+
+  // Best-effort only: the per-path /details shape for preview/live jobs is undocumented, so we merely
+  // observe it and NEVER trust or throw on it — reconciliation via resolveStatuses is the authority.
+  try {
+    const dResp = await fetchWithRetry(`${jobUrl}/details`, { headers: { Authorization: `Bearer ${token}` } });
+    if (dResp.ok) {
+      const details = await dResp.json() as { data?: { resources?: unknown }; resources?: unknown };
+      const resources = details.data?.resources ?? details.resources;
+      if (Array.isArray(resources) && resources.length > 0) {
+        const first = resources[0] as Record<string, unknown>;
+        if (!(first.path ?? first.webPath ?? first.resourcePath)) {
+          console.warn(`bulk ${topic}: unrecognized /details resource shape`, first);
+        }
+      }
+    }
+  } catch { /* details is an optional signal; ignore */ }
+
+  return { failed };
+}
+
+async function runBulkMutate(
+  paths: string[],
+  token: string,
+  topic: MutateTopic,
+  deleteOp: boolean,
+  onProgress?: StatusProgress,
+): Promise<BulkMutateOutcome> {
+  if (paths.length === 0) {
+    return { succeeded: new Set(), failed: new Map(), progress: { total: 0, processed: 0, failed: 0 } };
+  }
+  const { org, repo } = parseDAPath(paths[0]);
+  const dedup = [...new Set(paths)];
+  const grandTotal = dedup.length;
+  const chunkClean = new Map<string, boolean>();  // path → its chunk's job completed with failed === 0
+  let failedTotal = 0;
+
+  // Split into chunks and run a few jobs concurrently. Progress is the sum of each chunk's reported
+  // processed count — JS is single-threaded, so the shared writes below are race-free.
+  const chunks: string[][] = [];
+  for (let i = 0; i < dedup.length; i += BULK_MUTATE_CHUNK) chunks.push(dedup.slice(i, i + BULK_MUTATE_CHUNK));
+  const perChunkDone = new Array<number>(chunks.length).fill(0);
+  const report = () => onProgress?.(Math.min(perChunkDone.reduce((a, b) => a + b, 0), grandTotal), grandTotal);
+
+  await runBatch(chunks.map((chunk, idx) => ({ chunk, idx })), async ({ chunk, idx }) => {
+    const contentPaths = chunk.map((p) => parseDAPath(p).contentPath);
+    try {
+      const { failed } = await runBulkMutateChunk(
+        org, repo, topic, contentPaths, token,
+        (proc) => { perChunkDone[idx] = proc; report(); },
+        deleteOp,
+      );
+      failedTotal += failed;
+      for (const p of chunk) chunkClean.set(p, failed === 0);
+    } catch {
+      // Chunk job failed / timed out → per-path fan-out via the existing single-path endpoints.
+      const trigger = deleteOp ? triggerUnpublish : topic === 'preview' ? triggerPreview : triggerPublish;
+      await runBatch(chunk, async (p) => { try { await trigger(p, token); } catch { /* reconcile decides */ } }, DEFAULT_CONCURRENCY);
+      for (const p of chunk) chunkClean.set(p, false);
+    }
+    perChunkDone[idx] = chunk.length;
+    report();
+  }, MUTATE_JOB_CONCURRENCY);
+
+  // Reconcile the authoritative per-path outcome via the reliable bulk-status path.
+  const status = await resolveStatuses(dedup, token);
+  const succeeded = new Set<string>();
+  const failed = new Map<string, string>();
+  const label = deleteOp ? 'unpublish' : topic;
+  for (const p of dedup) {
+    const st = status.get(p);
+    const confirmed = deleteOp
+      ? (st?.ok === true && st.live === false)
+      : topic === 'preview'
+        ? (st?.ok === true && st.preview === true)
+        : (st?.ok === true && st.live === true);
+    if (confirmed) { succeeded.add(p); continue; }
+    // Only some negatives are authoritative: the live tier is HEAD-verifiable, the preview tier is
+    // not (headResolveStatus can't see it). A clean job over an otherwise-unverifiable path is trusted.
+    const authoritativeFail = topic === 'preview'
+      ? false
+      : deleteOp
+        ? (st?.ok === true && st.live === true)     // unpublish requested but still live → definitely failed
+        : (st?.ok === true && st.live === false);   // publish requested but not live → definitely failed
+    if (!authoritativeFail && chunkClean.get(p)) { succeeded.add(p); continue; }
+    failed.set(p, `${label} not confirmed`);
+  }
+  return { succeeded, failed, progress: { total: grandTotal, processed: grandTotal, failed: failedTotal } };
+}
+
+export function bulkPreview(paths: string[], token: string, onProgress?: StatusProgress): Promise<BulkMutateOutcome> {
+  return runBulkMutate(paths, token, 'preview', false, onProgress);
+}
+export function bulkPublish(paths: string[], token: string, onProgress?: StatusProgress): Promise<BulkMutateOutcome> {
+  return runBulkMutate(paths, token, 'live', false, onProgress);
+}
+export function bulkUnpublish(paths: string[], token: string, onProgress?: StatusProgress): Promise<BulkMutateOutcome> {
+  return runBulkMutate(paths, token, 'live', true, onProgress);
+}
+

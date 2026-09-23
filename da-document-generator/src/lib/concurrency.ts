@@ -1,5 +1,11 @@
 export const DEFAULT_CONCURRENCY = 3;
 
+// Generate step (build → write to DA source). DA's source API (admin.da.live) tolerates far more than
+// the AEM admin API, and postDoc/createDocVersion retry on 429/5xx (fetchWithRetry), so a transient
+// throttle won't drop rows. This is the DEFAULT for the Generate panel's user-adjustable "Write
+// concurrency" control — tune it live against DA's real write limit.
+export const GENERATE_CONCURRENCY = 12;
+
 // Higher bound for the Document Manager scan (crawl + per-doc source fetch). Tunable:
 // peak in-flight ≈ CRAWL_CONCURRENCY + STATUS_CONCURRENCY while fetch and status overlap.
 export const CRAWL_CONCURRENCY = 6;

@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import type { CsvRow, OutputState, RowResult, TemplateState } from './types';
 import { cat, validateTemplate, docExists, listDirDocPaths, postDoc, createDocVersion, getToken } from './api/daApi';
-import { runBatch } from './lib/concurrency';
+import { runBatch, GENERATE_CONCURRENCY } from './lib/concurrency';
 import { buildBakedDoc, resolveOutputPath, runBakeQa } from './lib/buildDoc';
-import { useDaDocumentActions } from './hooks/useDaDocumentActions';
 import { useBeforeUnload } from './hooks/useBeforeUnload';
 import TemplatePanel from './components/TemplatePanel';
 import DataUpload from './components/DataUpload';
@@ -25,6 +24,7 @@ export default function App() {
   const [outputDirValid, setOutputDirValid] = useState(false);
   const [results, setResults] = useState<RowResult[]>([]);
   const [generating, setGenerating] = useState(false);
+  const [generateConcurrency, setGenerateConcurrency] = useState(GENERATE_CONCURRENCY);
 
   // Warn before leaving the page once data has been uploaded, so an author doesn't lose
   // uploaded rows or generated results by closing/reloading (mirrors pdp-document-generator).
@@ -35,8 +35,6 @@ export default function App() {
     [rows],
   );
   const selectedRows = useMemo(() => rows.filter((r) => selectedIds.has(r._id)), [rows, selectedIds]);
-
-  const actions = useDaDocumentActions<RowResult>(setResults, { afterDelete: () => undefined });
 
   // Live-validate the template whenever its path changes (debounced) — replaces the Validate
   // button. Fires on mount for the default path. The `cancelled` guard drops stale responses.
@@ -121,7 +119,7 @@ export default function App() {
       } catch (err) {
         patch(w.id, { stage: 'error', error: err instanceof Error ? err.message : String(err) });
       }
-    });
+    }, generateConcurrency);
 
     setGenerating(false);
   }
@@ -184,7 +182,9 @@ export default function App() {
             onGenerate={handleGenerate}
             onReset={() => setResults([])}
             results={results}
-            actions={actions}
+            setResults={setResults}
+            generateConcurrency={generateConcurrency}
+            onGenerateConcurrencyChange={setGenerateConcurrency}
           />
         </Step>
       )}
