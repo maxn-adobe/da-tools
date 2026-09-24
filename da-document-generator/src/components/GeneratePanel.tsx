@@ -30,23 +30,12 @@ interface Props {
   onReset: () => void;
   results: RowResult[];
   setResults: Dispatch<SetStateAction<RowResult[]>>;
-  generateConcurrency: number;
-  onGenerateConcurrencyChange: (n: number) => void;
 }
 
 // Bulk operations other than generation (which App drives via the `generating` prop).
 type BulkOp = 'idle' | 'previewing' | 'publishing' | 'unpublishing' | 'deleting';
 
 type UrlExportKind = 'document' | 'preview' | 'live';
-
-// Which action buttons were visible when a bulk op started — kept so they persist (disabled)
-// through the op instead of vanishing as row stages change under them.
-interface FrozenButtons {
-  preview: boolean;
-  publish: boolean;
-  unpublish: boolean;
-  delete: boolean;
-}
 
 // Stages at which the source document exists in DA — used to decide which rows contribute a
 // document link to the URL export.
@@ -69,14 +58,15 @@ export default function GeneratePanel({
   onReset,
   results,
   setResults,
-  generateConcurrency,
-  onGenerateConcurrencyChange,
 }: Props) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  // Which result rows are checked. Selection drives every bulk op (preview/publish/unpublish/delete);
+  // it PERSISTS across ops so the author can chain preview → publish → … on the same set (mirrors
+  // da-document-manager). Keyed by row `id` (results are keyed by id, not path).
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkOp, setBulkOp] = useState<BulkOp>('idle');
   const [bulkTotal, setBulkTotal] = useState(0);
   const bulkTargets = useRef<Set<string>>(new Set());
-  const [frozen, setFrozen] = useState<FrozenButtons | null>(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [resetModalOpen, setResetModalOpen] = useState(false);
   const [existenceStatus, setExistenceStatus] = useState<Record<string, ExistenceCheck>>({});
@@ -85,7 +75,10 @@ export default function GeneratePanel({
   const [showExportMenu, setShowExportMenu] = useState(false);
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const [bulkProgress, setBulkProgress] = useState<{ op: BulkProgressOp; done: number; total: number } | null>(null);
-  const [publishQaMode, setPublishQaMode] = useState<PublishQaConfig>({ mode: 'off' });
+
+  // Publish-QA is fixed off for now — the Off/Sample/All selector was hidden for the demo. To bring it
+  // back, restore the `publishQaMode` useState + the QA <select> in the toolbar (see git history).
+  const publishQaMode: PublishQaConfig = { mode: 'off' };
 
   const actions = useDaDocumentActions<RowResult>(setResults, {
     afterDelete: () => undefined,
@@ -153,6 +146,23 @@ export default function GeneratePanel({
     }, DEFAULT_CONCURRENCY);
   }, [previewRows, results.length]);
 
+  // Keep the selection valid as rows come and go: prune ids that no longer exist (e.g. after a bulk
+  // delete removes rows from `results`) so the count + select-all stay correct while surviving boxes
+  // stay checked. Never clears a still-present selection.
+  useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(results.map((r) => r.id));
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (valid.has(id)) next.add(id);
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [results]);
+
   // Close the export dropdown on an outside click.
   useEffect(() => {
     if (!showExportMenu) return;
@@ -174,6 +184,21 @@ export default function GeneratePanel({
     });
   }
 
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  const allSelected = results.length > 0 && results.every((r) => selected.has(r.id));
+
+  function toggleSelectAll() {
+    setSelected(allSelected ? new Set() : new Set(results.map((r) => r.id)));
+  }
+
   const existingCount = previewRows.filter((pr) => existenceStatus[pr.path] === 'exists').length;
   const running = generating || bulkOp !== 'idle';
 
@@ -187,25 +212,22 @@ export default function GeneratePanel({
       return s === undefined || s === 'checking';
     });
 
-  // Bulk-button visibility + labels are derived from the result stages.
+  // Stage tallies for the summary line only (button eligibility is selection-driven, below).
   const counts = {
     generated: results.filter((r) =>
       ['generated', 'previewing', 'previewed', 'publishing', 'published'].includes(r.stage),
     ).length,
-    previewable: results.filter((r) => r.stage === 'generated').length,
     previewed: results.filter((r) => ['previewed', 'publishing', 'published'].includes(r.stage)).length,
-    publishable: results.filter((r) => r.stage === 'previewed').length,
     published: results.filter((r) => r.stage === 'published').length,
     error: results.filter((r) => r.stage === 'error').length,
-    deletable: results.filter((r) => DELETABLE_STAGES.includes(r.stage)).length,
   };
 
-  // When a bulk op is running, keep the frozen set visible (disabled); otherwise derive from counts
-  // (and hide during generation, when `running` is true but no bulk op is active).
-  const showPreviewBtn = frozen ? frozen.preview : !running && counts.previewable > 0;
-  const showPublishBtn = frozen ? frozen.publish : !running && counts.publishable > 0;
-  const showUnpublishBtn = frozen ? frozen.unpublish : !running && counts.published >= 2;
-  const showDeleteBtn = frozen ? frozen.delete : !running && counts.deletable >= 2;
+  // Each bulk op acts on the CHECKED rows that are valid for that op's stage (selection ∩ eligible
+  // stage). A button is enabled only when its target set is non-empty.
+  const previewTargets = results.filter((r) => selected.has(r.id) && r.stage === 'generated');
+  const publishTargets = results.filter((r) => selected.has(r.id) && r.stage === 'previewed');
+  const unpublishTargets = results.filter((r) => selected.has(r.id) && r.stage === 'published');
+  const deleteTargets = results.filter((r) => selected.has(r.id) && DELETABLE_STAGES.includes(r.stage));
 
   // How many of the current bulk op's targets have reached a terminal state — drives the "X / N"
   // progress label inside the active button. Deleted rows are removed from `results`, so delete
@@ -231,12 +253,6 @@ export default function GeneratePanel({
     targets: RowResult[],
     fn: (rows: RowResult[]) => Promise<void>,
   ) {
-    setFrozen({
-      preview: counts.previewable > 0 || op === 'previewing',
-      publish: counts.publishable > 0 || op === 'publishing',
-      unpublish: counts.published >= 2 || op === 'unpublishing',
-      delete: counts.deletable >= 2 || op === 'deleting',
-    });
     bulkTargets.current = new Set(targets.map((t) => t.id));
     setBulkTotal(targets.length);
     setBulkProgress(null);
@@ -244,29 +260,26 @@ export default function GeneratePanel({
     await fn(targets);
     setBulkOp('idle');
     setBulkProgress(null);
-    setFrozen(null);
+    // Selection is intentionally NOT cleared — boxes stay checked so the author can chain the next op.
   }
 
-  const handlePreview = () =>
-    runBulk('previewing', results.filter((r) => r.stage === 'generated'), actions.previewBulk);
-  const handlePublish = () =>
-    runBulk('publishing', results.filter((r) => r.stage === 'previewed'), actions.publishBulk);
-  const handleUnpublish = () =>
-    runBulk('unpublishing', results.filter((r) => r.stage === 'published'), actions.unpublishBulk);
+  const handlePreview = () => runBulk('previewing', previewTargets, actions.previewBulk);
+  const handlePublish = () => runBulk('publishing', publishTargets, actions.publishBulk);
+  const handleUnpublish = () => runBulk('unpublishing', unpublishTargets, actions.unpublishBulk);
   const handleBulkDelete = () => {
     setDeleteModalOpen(false);
-    return runBulk('deleting', results.filter((r) => DELETABLE_STAGES.includes(r.stage)), actions.deleteBulk);
+    return runBulk('deleting', deleteTargets, actions.deleteBulk);
   };
 
   function handleReset() {
     setResetModalOpen(false);
     onReset();
+    setSelected(new Set());
     setExistenceStatus({});
     checkedPaths.current.clear();
     dirListCache.current.clear();
     setBulkOp('idle');
     setBulkProgress(null);
-    setFrozen(null);
   }
 
   function collectUrls(kind: UrlExportKind): string[] {
@@ -298,9 +311,9 @@ export default function GeneratePanel({
   }
 
   // Shared classes for the colored bulk-action buttons. `cursor-pointer` so they read as clickable;
-  // disabled while any op runs.
+  // disabled while any op runs OR when nothing eligible is selected.
   const btnBase =
-    'rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-60';
+    'rounded-lg px-5 py-2.5 text-sm font-semibold text-white transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-40';
 
   // Bulk-op "X / N": preview/publish/unpublish are jobs (driven by the job's own reported progress);
   // delete is still a per-row fan-out (bulkProgress stays null → derive from row stages via bulkDone).
@@ -330,87 +343,65 @@ export default function GeneratePanel({
             : `Generate ${selectedCount} ${selectedCount === 1 ? 'row' : 'rows'}`}
         </button>
 
-        <label className="flex items-center gap-1.5 text-xs text-gray-600" title="How many document writes run in parallel. Higher is faster but may hit DA rate limits; retry absorbs transient throttling.">
-          Write concurrency
-          <input
-            type="number"
-            min={1}
-            max={24}
-            value={generateConcurrency}
-            disabled={running}
-            onChange={(e) => onGenerateConcurrencyChange(Math.max(1, Math.min(24, Number(e.target.value) || 1)))}
-            className="h-7 w-14 rounded-lg border border-gray-300 px-1.5 text-xs disabled:opacity-50"
-          />
-        </label>
+        {results.length > 0 && (
+          <>
+            <div className="flex items-center gap-2 text-sm text-gray-600">
+              <span className="font-medium">{selected.size} selected</span>
+              {selected.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="cursor-pointer text-xs text-gray-500 underline hover:text-gray-700"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
 
-        {showPreviewBtn && (
-          <button
-            type="button"
-            onClick={handlePreview}
-            disabled={running}
-            className={`${btnBase} bg-indigo-600 hover:bg-indigo-700`}
-          >
-            {bulkOp === 'previewing'
-              ? `Previewing… ${progressText}`
-              : `Preview ${counts.previewable} document${counts.previewable === 1 ? '' : 's'}`}
-          </button>
-        )}
-
-        {showPublishBtn && (
-          <button
-            type="button"
-            onClick={handlePublish}
-            disabled={running}
-            className={`${btnBase} bg-green-600 hover:bg-green-700`}
-          >
-            {bulkOp === 'publishing'
-              ? `Publishing… ${progressText}`
-              : `Publish ${counts.publishable} document${counts.publishable === 1 ? '' : 's'}`}
-          </button>
-        )}
-
-        {showPublishBtn && (
-          <label className="flex items-center gap-1.5 text-xs text-gray-600" title="Run page QA on published pages after publish. Sampling avoids fetching every live page at scale.">
-            QA
-            <select
-              value={publishQaMode.mode}
-              onChange={(e) => {
-                const m = e.target.value as PublishQaConfig['mode'];
-                setPublishQaMode(m === 'sample' ? { mode: 'sample', sampleSize: 10 } : { mode: m });
-              }}
-              className="h-7 cursor-pointer rounded-lg border border-gray-300 px-1.5 text-xs"
+            <button
+              type="button"
+              onClick={handlePreview}
+              disabled={running || previewTargets.length === 0}
+              className={`${btnBase} bg-indigo-600 hover:bg-indigo-700`}
             >
-              <option value="off">Off</option>
-              <option value="sample">Sample 10</option>
-              <option value="all">All</option>
-            </select>
-          </label>
-        )}
+              {bulkOp === 'previewing'
+                ? `Previewing… ${progressText}`
+                : `Preview ${previewTargets.length} document${previewTargets.length === 1 ? '' : 's'}`}
+            </button>
 
-        {showUnpublishBtn && (
-          <button
-            type="button"
-            onClick={handleUnpublish}
-            disabled={running}
-            className={`${btnBase} bg-red-600 hover:bg-red-700`}
-          >
-            {bulkOp === 'unpublishing'
-              ? `Unpublishing… ${progressText}`
-              : `Unpublish ${counts.published} documents`}
-          </button>
-        )}
+            <button
+              type="button"
+              onClick={handlePublish}
+              disabled={running || publishTargets.length === 0}
+              className={`${btnBase} bg-green-600 hover:bg-green-700`}
+            >
+              {bulkOp === 'publishing'
+                ? `Publishing… ${progressText}`
+                : `Publish ${publishTargets.length} document${publishTargets.length === 1 ? '' : 's'}`}
+            </button>
 
-        {showDeleteBtn && (
-          <button
-            type="button"
-            onClick={() => setDeleteModalOpen(true)}
-            disabled={running}
-            className={`${btnBase} bg-red-700 hover:bg-red-800`}
-          >
-            {bulkOp === 'deleting'
-              ? `Deleting… ${progressText}`
-              : `Delete ${counts.deletable} documents`}
-          </button>
+            <button
+              type="button"
+              onClick={handleUnpublish}
+              disabled={running || unpublishTargets.length === 0}
+              className={`${btnBase} bg-red-600 hover:bg-red-700`}
+            >
+              {bulkOp === 'unpublishing'
+                ? `Unpublishing… ${progressText}`
+                : `Unpublish ${unpublishTargets.length} document${unpublishTargets.length === 1 ? '' : 's'}`}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setDeleteModalOpen(true)}
+              disabled={running || deleteTargets.length === 0}
+              className={`${btnBase} bg-red-700 hover:bg-red-800`}
+            >
+              {bulkOp === 'deleting'
+                ? `Deleting… ${progressText}`
+                : `Delete ${deleteTargets.length} document${deleteTargets.length === 1 ? '' : 's'}`}
+            </button>
+          </>
         )}
 
         {results.length > 0 && (
@@ -483,6 +474,17 @@ export default function GeneratePanel({
           <table className="min-w-full text-left text-sm">
             <thead className="bg-gray-50 text-xs text-gray-600">
               <tr>
+                <th className="w-10 px-3 py-2 font-medium">
+                  {!preview && (
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleSelectAll}
+                      aria-label="Select all rows"
+                      className="cursor-pointer"
+                    />
+                  )}
+                </th>
                 <th className="px-3 py-2 font-medium">#</th>
                 <th className="px-3 py-2 font-medium">Output path</th>
                 <th className="px-3 py-2 font-medium">Doc</th>
@@ -496,6 +498,7 @@ export default function GeneratePanel({
               {preview
                 ? previewRows.map((pr, i) => (
                     <tr key={pr.id} className="opacity-60">
+                      <td className="px-3 py-1.5" />
                       <td className="px-3 py-1.5 text-xs tabular-nums text-gray-500">{i + 1}</td>
                       <td className="px-3 py-1.5 font-mono text-xs">
                         <span className="inline-flex items-center gap-2">
@@ -524,7 +527,16 @@ export default function GeneratePanel({
                   ))
                 : results.map((r, i) => (
                     <Fragment key={r.id}>
-                      <tr>
+                      <tr className={selected.has(r.id) ? 'bg-blue-50/50' : undefined}>
+                        <td className="px-3 py-1.5">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(r.id)}
+                            onChange={() => toggleSelect(r.id)}
+                            aria-label={`Select ${r.path}`}
+                            className="cursor-pointer"
+                          />
+                        </td>
                         <td className="px-3 py-1.5 text-xs tabular-nums text-gray-500">{i + 1}</td>
                         <td className="px-3 py-1.5 font-mono text-xs text-gray-700">
                           <span className="inline-flex items-center gap-2">
@@ -562,7 +574,7 @@ export default function GeneratePanel({
                       </tr>
                       {expanded.has(r.id) && r.qa && (
                         <tr className="bg-gray-50">
-                          <td colSpan={7} className="px-3 py-2">
+                          <td colSpan={8} className="px-3 py-2">
                             <ul className="flex flex-col gap-1 text-xs">
                               {r.qa.checks.map((c) => (
                                 <li key={c.id} className={c.pass ? 'text-green-700' : 'text-amber-700'}>
@@ -597,18 +609,16 @@ export default function GeneratePanel({
 
       {deleteModalOpen && (
         <ConfirmModal
-          title={`Delete ${counts.deletable} document${counts.deletable === 1 ? '' : 's'}?`}
+          title={`Delete ${deleteTargets.length} document${deleteTargets.length === 1 ? '' : 's'}?`}
           confirmLabel="Delete"
           onCancel={() => setDeleteModalOpen(false)}
           onConfirm={handleBulkDelete}
         >
           <p className="text-sm text-gray-500">This permanently deletes the following documents from DA:</p>
           <ul className="flex max-h-64 flex-col gap-1 overflow-y-auto rounded-lg border border-gray-100 p-3 font-mono text-xs text-gray-700">
-            {results
-              .filter((r) => DELETABLE_STAGES.includes(r.stage))
-              .map((r) => (
-                <li key={r.id} className="whitespace-nowrap">{r.path}</li>
-              ))}
+            {deleteTargets.map((r) => (
+              <li key={r.id} className="whitespace-nowrap">{r.path}</li>
+            ))}
           </ul>
         </ConfirmModal>
       )}

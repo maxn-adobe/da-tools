@@ -24,7 +24,6 @@ export default function App() {
   const [outputDirValid, setOutputDirValid] = useState(false);
   const [results, setResults] = useState<RowResult[]>([]);
   const [generating, setGenerating] = useState(false);
-  const [generateConcurrency, setGenerateConcurrency] = useState(GENERATE_CONCURRENCY);
 
   // Warn before leaving the page once data has been uploaded, so an author doesn't lose
   // uploaded rows or generated results by closing/reloading (mirrors pdp-document-generator).
@@ -119,7 +118,7 @@ export default function App() {
       } catch (err) {
         patch(w.id, { stage: 'error', error: err instanceof Error ? err.message : String(err) });
       }
-    }, generateConcurrency);
+    }, GENERATE_CONCURRENCY);
 
     setGenerating(false);
   }
@@ -183,8 +182,6 @@ export default function App() {
             onReset={() => setResults([])}
             results={results}
             setResults={setResults}
-            generateConcurrency={generateConcurrency}
-            onGenerateConcurrencyChange={setGenerateConcurrency}
           />
         </Step>
       )}
