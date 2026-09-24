@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "da-document-manager", "run", "dev"],
       "port": 3000
+    },
+    {
+      "name": "da-document-studio",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "da-document-studio", "run", "dev"],
+      "port": 3000
     }
   ]
 }
