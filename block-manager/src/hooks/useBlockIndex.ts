@@ -1,9 +1,9 @@
 import {
-  useCallback, useEffect, useMemo, useReducer, useRef, useState,
+  useCallback, useEffect, useMemo, useReducer, useState,
 } from 'react';
 import { ls, collectDocs, readJson, writeJson, fetchPublishedPaths } from '../api/daApi';
 import {
-  AUDIT_ROOT, DEFAULT_REPO, REPO_STORAGE_KEY, SKIP_DIRS, SEED_IDS,
+  AUDIT_ROOT, REPO_STORAGE_KEY, SKIP_DIRS, SEED_IDS,
   deriveConfig, mergeRegistry,
 } from '../lib/config';
 import { getUserEmail } from '../lib/session';
@@ -15,8 +15,11 @@ import type {
   RepoEntry, RepoConfig, RepoBlocks, KitchenSinkBlocks, AuditRecord, DirPart, SortKey,
 } from '../types';
 
-// How many never-scanned dirs to count-crawl at once when the Directory Scans panel opens.
+// How many dirs to count-crawl at once during "Count All".
 const COUNT_CONCURRENCY = 3;
+
+// No repo selected — the registry is empty until a user adds one.
+const NO_REPO = '';
 
 const emptyRepoBlocks = (): RepoBlocks => ({ own: new Set(), milo: new Set() });
 
@@ -24,12 +27,18 @@ function auditPath(cfg: RepoConfig, dir: string): string {
   return `${cfg.auditDir}/audit-${dir}.json`;
 }
 
+function countsPath(cfg: RepoConfig): string {
+  return `${cfg.auditDir}/counts.json`;
+}
+
+interface CountsDoc { counts?: Record<string, number> }
+
 function readInitialRepo(): string {
   try {
     const saved = localStorage.getItem(REPO_STORAGE_KEY);
     if (saved) return saved; // validated against the registry once it loads
   } catch { /* ignore */ }
-  return DEFAULT_REPO;
+  return NO_REPO;
 }
 
 function rememberRepo(id: string): void {
@@ -70,26 +79,32 @@ export function useBlockIndex(hasToken: boolean) {
   const [notice, setNotice] = useState('');
   const [sort, setSort] = useState<SortKey>('usage');
   const [dirScansOpen, setDirScansOpen] = useState(false);
+  // Persisted per-repo directory doc counts (like scans): a number, or 'counting' while in flight.
   const [dirCounts, setDirCounts] = useState<Record<string, number | 'counting'>>({});
-
-  // Refs (kept out of effect deps): the current dirParts for the count effect's filtering, and the
-  // set of dirs already counted / in-flight so the effect never recrawls them.
-  const dirPartsRef = useRef(dirParts);
-  dirPartsRef.current = dirParts;
-  const countedRef = useRef<Set<string>>(new Set());
 
   const currentEmail = getUserEmail();
 
-  const cfg = useMemo(
-    () => deriveConfig(registry.get(selectedRepoId) ?? registry.get(DEFAULT_REPO)!),
-    [registry, selectedRepoId],
-  );
+  // Null when no repo is selected (empty registry / unknown remembered id).
+  const cfg = useMemo<RepoConfig | null>(() => {
+    const entry = registry.get(selectedRepoId);
+    return entry ? deriveConfig(entry) : null;
+  }, [registry, selectedRepoId]);
 
   const merged = useMemo(() => mergeAllParts(dirParts), [dirParts]);
   const publishedSet = useMemo(
     () => (merged?.publishedPaths ? new Set(merged.publishedPaths) : null),
     [merged],
   );
+
+  // Persist the numeric entries of a counts map to the repo's counts.json (best-effort).
+  const persistCounts = useCallback(async (
+    activeCfg: RepoConfig,
+    counts: Record<string, number | 'counting'>,
+  ): Promise<void> => {
+    const numeric: Record<string, number> = {};
+    for (const [d, v] of Object.entries(counts)) if (typeof v === 'number') numeric[d] = v;
+    try { await writeJson(countsPath(activeCfg), { counts: numeric }); } catch { /* ignore */ }
+  }, []);
 
   // One-time: load the shared registry, then validate the remembered repo against it.
   useEffect(() => {
@@ -99,7 +114,7 @@ export function useBlockIndex(hasToken: boolean) {
       const reg = await loadRegistry();
       if (cancelled) return;
       setRegistry(reg);
-      setSelectedRepoId((cur) => (reg.has(cur) ? cur : DEFAULT_REPO));
+      setSelectedRepoId((cur) => (reg.has(cur) ? cur : NO_REPO));
       setRegistryLoaded(true);
     })();
     return () => { cancelled = true; };
@@ -108,7 +123,8 @@ export function useBlockIndex(hasToken: boolean) {
   // Per-repo init: runs on repo switch or config edit. Read-only, so StrictMode's dev double-fire
   // is merely wasteful; the cancelled guard drops stale results when the repo changes mid-flight.
   useEffect(() => {
-    if (!hasToken || !registryLoaded) return undefined;
+    if (!hasToken || !registryLoaded || !cfg) return undefined;
+    const activeCfg = cfg;
     let cancelled = false;
     (async () => {
       setBusy(true);
@@ -118,12 +134,11 @@ export function useBlockIndex(hasToken: boolean) {
       setRepoBlocks(emptyRepoBlocks());
       setKsb(null);
       setDirCounts({});
-      countedRef.current = new Set();
 
       const [rootItems, rb, ksb] = await Promise.all([
-        ls(cfg.scanRoot).catch(() => []),
-        fetchRepoBlocks(cfg),
-        fetchKitchenSinkBlocks(cfg),
+        ls(activeCfg.scanRoot).catch(() => []),
+        fetchRepoBlocks(activeCfg),
+        fetchKitchenSinkBlocks(activeCfg),
       ]);
       if (cancelled) return;
       setKsb(ksb);
@@ -137,19 +152,28 @@ export function useBlockIndex(hasToken: boolean) {
 
       if (dirList.length === 0) {
         setRepoBlocks(effectiveRepoBlocks);
-        setStatus(`No content directories found under ${cfg.scanRoot} — check your read access to this repo.`);
+        setStatus(`No content directories found under ${activeCfg.scanRoot} — check your read access to this repo.`);
         setBusy(false);
         return;
       }
       setDirs(dirList);
 
-      const loaded = await Promise.all(
-        dirList.map(async (dir) => [dir, await readJson<AuditRecord>(auditPath(cfg, dir))] as const),
-      );
+      const [loaded, countsDoc] = await Promise.all([
+        Promise.all(
+          dirList.map(async (dir) => [dir, await readJson<AuditRecord>(auditPath(activeCfg, dir))] as const),
+        ),
+        readJson<CountsDoc>(countsPath(activeCfg)),
+      ]);
       if (cancelled) return;
       const partsObj: DirPartsState = {};
       for (const [dir, data] of loaded) partsObj[dir] = data;
       dispatch({ type: 'LOAD_ALL', parts: partsObj });
+
+      // Load persisted directory counts (only for dirs that still exist).
+      const storedCounts = countsDoc?.counts ?? {};
+      const counts: Record<string, number> = {};
+      for (const dir of dirList) if (typeof storedCounts[dir] === 'number') counts[dir] = storedCounts[dir];
+      setDirCounts(counts);
 
       // Fall back to stored repo blocks if the GitHub fetch returned nothing.
       if (effectiveRepoBlocks.own.size === 0 && effectiveRepoBlocks.milo.size === 0) {
@@ -165,57 +189,15 @@ export function useBlockIndex(hasToken: boolean) {
     return () => { cancelled = true; };
   }, [cfg, hasToken, registryLoaded]);
 
-  // Count docs in each never-scanned dir once the Directory Scans panel is open (and the repo has
-  // finished loading). ls-only crawl, concurrency-limited, cached; scanned dirs use their cached
-  // docCount instead. Deps deliberately exclude dirParts/dirCounts (read via refs) so completing a
-  // scan or a count doesn't cancel in-flight crawls.
-  useEffect(() => {
-    if (!dirScansOpen || busy) return undefined;
-    const parts = dirPartsRef.current;
-    const toCount = dirs.filter((d) => parts[d] == null && !countedRef.current.has(d));
-    if (toCount.length === 0) return undefined;
-
-    let cancelled = false;
-    for (const d of toCount) countedRef.current.add(d);
-    setDirCounts((prev) => {
-      const next = { ...prev };
-      for (const d of toCount) next[d] = 'counting';
-      return next;
-    });
-
-    (async () => {
-      for (let i = 0; i < toCount.length && !cancelled; i += COUNT_CONCURRENCY) {
-        const batch = toCount.slice(i, i + COUNT_CONCURRENCY);
-        // eslint-disable-next-line no-await-in-loop
-        await Promise.all(batch.map(async (d) => {
-          try {
-            const docs = await collectDocs(`${cfg.scanRoot}/${d}`);
-            if (!cancelled) setDirCounts((prev) => ({ ...prev, [d]: docs.length }));
-          } catch {
-            countedRef.current.delete(d); // allow a retry on the next open
-            if (!cancelled) {
-              setDirCounts((prev) => {
-                const next = { ...prev };
-                delete next[d];
-                return next;
-              });
-            }
-          }
-        }));
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [dirScansOpen, busy, dirs, cfg]);
-
   const scanOne = useCallback(async (dirName: string) => {
-    if (busy) return;
+    if (!cfg || busy) return;
+    const activeCfg = cfg;
     setBusy(true);
     dispatch({ type: 'SET_SCANNING', dir: dirName });
     try {
-      const data = await runScanForDir(cfg, dirName, repoBlocks, setStatus);
+      const data = await runScanForDir(activeCfg, dirName, repoBlocks, setStatus);
       setStatus('Saving…');
-      await writeJson(auditPath(cfg, dirName), data);
+      await writeJson(auditPath(activeCfg, dirName), data);
       dispatch({ type: 'SET_RESULT', dir: dirName, data });
       setStatus('');
     } catch (err) {
@@ -227,7 +209,8 @@ export function useBlockIndex(hasToken: boolean) {
   }, [busy, cfg, repoBlocks]);
 
   const scanAll = useCallback(async () => {
-    if (busy) return;
+    if (!cfg || busy) return;
+    const activeCfg = cfg;
     setBusy(true);
     setDirScansOpen(true);
     try {
@@ -235,10 +218,10 @@ export function useBlockIndex(hasToken: boolean) {
         dispatch({ type: 'SET_SCANNING', dir });
         try {
           // eslint-disable-next-line no-await-in-loop
-          const data = await runScanForDir(cfg, dir, repoBlocks, setStatus);
+          const data = await runScanForDir(activeCfg, dir, repoBlocks, setStatus);
           setStatus('Saving…');
           // eslint-disable-next-line no-await-in-loop
-          await writeJson(auditPath(cfg, dir), data);
+          await writeJson(auditPath(activeCfg, dir), data);
           dispatch({ type: 'SET_RESULT', dir, data });
         } catch (err) {
           dispatch({ type: 'SET_RESULT', dir, data: null });
@@ -251,8 +234,68 @@ export function useBlockIndex(hasToken: boolean) {
     }
   }, [busy, dirs, cfg, repoBlocks]);
 
+  // Count the docs in one directory (ls-only crawl), then persist the updated counts map.
+  const countOne = useCallback(async (dirName: string) => {
+    if (!cfg || busy) return;
+    const activeCfg = cfg;
+    setBusy(true);
+    setStatus(`Counting ${dirName}…`);
+    setDirCounts((prev) => ({ ...prev, [dirName]: 'counting' }));
+    try {
+      const docs = await collectDocs(`${activeCfg.scanRoot}/${dirName}`);
+      let nextMap: Record<string, number | 'counting'> = {};
+      setDirCounts((prev) => { nextMap = { ...prev, [dirName]: docs.length }; return nextMap; });
+      await persistCounts(activeCfg, nextMap);
+      setStatus('');
+    } catch (err) {
+      setDirCounts((prev) => { const next = { ...prev }; delete next[dirName]; return next; });
+      setStatus(`Error counting ${dirName}: ${(err as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, cfg, persistCounts]);
+
+  // Count every directory, then persist once.
+  const countAll = useCallback(async () => {
+    if (!cfg || busy || dirs.length === 0) return;
+    const activeCfg = cfg;
+    setBusy(true);
+    setDirScansOpen(true);
+    setDirCounts((prev) => {
+      const next = { ...prev };
+      for (const d of dirs) next[d] = 'counting';
+      return next;
+    });
+    let done = 0;
+    try {
+      for (let i = 0; i < dirs.length; i += COUNT_CONCURRENCY) {
+        const batch = dirs.slice(i, i + COUNT_CONCURRENCY);
+        // eslint-disable-next-line no-await-in-loop
+        await Promise.all(batch.map(async (d) => {
+          try {
+            const docs = await collectDocs(`${activeCfg.scanRoot}/${d}`);
+            setDirCounts((prev) => ({ ...prev, [d]: docs.length }));
+          } catch {
+            setDirCounts((prev) => { const next = { ...prev }; delete next[d]; return next; });
+          } finally {
+            done += 1;
+            setStatus(`Counting… ${done} / ${dirs.length}`);
+          }
+        }));
+      }
+      // Persist the final map (read the latest via a no-op updater).
+      let finalMap: Record<string, number | 'counting'> = {};
+      setDirCounts((prev) => { finalMap = prev; return prev; });
+      await persistCounts(activeCfg, finalMap);
+      setStatus('');
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, dirs, cfg, persistCounts]);
+
   const checkStatus = useCallback(async () => {
-    if (busy) return;
+    if (!cfg || busy) return;
+    const activeCfg = cfg;
     setBusy(true);
 
     const pathToDir: Record<string, string> = {};
@@ -283,7 +326,7 @@ export function useBlockIndex(hasToken: boolean) {
           if (!data || data === 'scanning') return;
           const updated: AuditRecord = { ...data, statusCheckedAt: now, publishedPaths: publishedByDir[dir] || [] };
           updates[dir] = updated;
-          await writeJson(auditPath(cfg, dir), updated);
+          await writeJson(auditPath(activeCfg, dir), updated);
         }),
       );
       dispatch({ type: 'SET_STATUS_RESULTS', updates });
@@ -332,7 +375,7 @@ export function useBlockIndex(hasToken: boolean) {
       saveError = (err as Error).message;
     }
     setRegistry(next);
-    const nextId = next.has(selectedRepoId) ? selectedRepoId : DEFAULT_REPO;
+    const nextId = next.has(selectedRepoId) ? selectedRepoId : NO_REPO;
     rememberRepo(nextId);
     setSelectedRepoId(nextId);
     setNotice(saveError
@@ -340,8 +383,8 @@ export function useBlockIndex(hasToken: boolean) {
       : '');
   }, [registry, selectedRepoId]);
 
-  // Advisory ownership check: only the person who added a repo (by email) may edit/remove it; seeds
-  // (no addedBy) are locked for everyone. Client-side only — not a security boundary.
+  // Advisory ownership check: only the person who added a repo (by email) may edit/remove it.
+  // Client-side only — not a security boundary.
   const canManage = useCallback(
     (entry: RepoEntry | undefined) => (
       !!entry && !SEED_IDS.has(entry.id) && !!entry.addedBy && entry.addedBy === currentEmail
@@ -351,6 +394,7 @@ export function useBlockIndex(hasToken: boolean) {
 
   return {
     registry,
+    registryLoaded,
     selectedRepoId,
     cfg,
     dirs,
@@ -374,6 +418,8 @@ export function useBlockIndex(hasToken: boolean) {
     removeRepo,
     scanOne,
     scanAll,
+    countOne,
+    countAll,
     checkStatus,
   };
 }

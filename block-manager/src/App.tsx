@@ -68,42 +68,55 @@ export default function App() {
             />
           )}
 
-          <div className="toolbar">
-            <button type="button" onClick={bi.scanAll} disabled={bi.busy}>Scan All</button>
-            {bi.merged && (
-              <button type="button" onClick={bi.checkStatus} disabled={bi.busy}>
-                {bi.merged.publishedPaths?.length ? 'Refresh Status' : 'Check Status'}
-              </button>
-            )}
-          </div>
-
-          <p id="status">{bi.status}</p>
           {bi.notice && <p className="no-token">{bi.notice}</p>}
 
-          <DirectoryScans
-            dirs={bi.dirs}
-            dirParts={bi.dirParts}
-            dirCounts={bi.dirCounts}
-            busy={bi.busy}
-            open={bi.dirScansOpen}
-            onToggle={bi.setDirScansOpen}
-            onScanDir={bi.scanOne}
-          />
+          {bi.cfg ? (
+            <>
+              <div className="toolbar">
+                <button type="button" onClick={bi.scanAll} disabled={bi.busy}>Scan All</button>
+                <button type="button" onClick={bi.countAll} disabled={bi.busy}>Count All</button>
+                {bi.merged && (
+                  <button type="button" onClick={bi.checkStatus} disabled={bi.busy}>
+                    {bi.merged.publishedPaths?.length ? 'Refresh Status' : 'Check Status'}
+                  </button>
+                )}
+              </div>
 
-          {bi.merged ? (
-            <BlockWorkspace
-              cfg={bi.cfg}
-              data={bi.merged}
-              repoBlocks={bi.repoBlocks}
-              publishedSet={bi.publishedSet}
-              sort={bi.sort}
-              onSortChange={bi.setSort}
-              selectedBlock={selectedBlock}
-              onSelect={setSelectedBlock}
-            />
+              <p id="status">{bi.status}</p>
+
+              <DirectoryScans
+                dirs={bi.dirs}
+                dirParts={bi.dirParts}
+                dirCounts={bi.dirCounts}
+                busy={bi.busy}
+                open={bi.dirScansOpen}
+                onToggle={bi.setDirScansOpen}
+                onScanDir={bi.scanOne}
+                onCountDir={bi.countOne}
+              />
+
+              {bi.merged ? (
+                <BlockWorkspace
+                  cfg={bi.cfg}
+                  data={bi.merged}
+                  repoBlocks={bi.repoBlocks}
+                  publishedSet={bi.publishedSet}
+                  sort={bi.sort}
+                  onSortChange={bi.setSort}
+                  selectedBlock={selectedBlock}
+                  onSelect={setSelectedBlock}
+                />
+              ) : (
+                <p id="block-count" className="meta">
+                  No scan data yet. Expand &quot;Directory Scans&quot; above to begin.
+                </p>
+              )}
+            </>
           ) : (
-            <p id="block-count" className="meta">
-              No scan data yet. Expand &quot;Directory Scans&quot; above to begin.
+            <p className="empty-repos">
+              {bi.registryLoaded
+                ? 'No repo yet — click "+ Add repo" above to add one.'
+                : 'Loading…'}
             </p>
           )}
         </>

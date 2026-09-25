@@ -215,11 +215,13 @@ input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #
 }
 
 /* ── Two-pane block/variant workspace ───────────────────────────────────────── */
-.workspace { display: flex; gap: 1.25rem; align-items: flex-start; margin-top: 0.5rem; }
+.workspace { display: flex; gap: 0; align-items: flex-start; margin-top: 0.5rem; }
+
+.empty-repos { color: #777; font-size: 0.95rem; padding: 1.5rem 0.25rem; }
 
 .sidebar {
-  width: 260px;
   flex-shrink: 0;
+  box-sizing: border-box;
   position: sticky;
   top: 1rem;
   max-height: calc(100vh - 2rem);
@@ -236,9 +238,27 @@ input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #
   font-size: 0.88rem; padding: 0.4rem 0.55rem;
   border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333;
 }
-.sidebar-controls { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
-.sidebar-controls #legend { flex-direction: column; gap: 0.15rem; font-size: 0.72rem; }
-.sidebar-controls #legend .legend-express-square { font-size: 1.1rem; }
+.sidebar-sort { display: flex; align-items: center; gap: 0.45rem; }
+.sidebar-sort label { font-size: 0.85rem; color: #666; }
+.sidebar-sort #sort-select { flex: 1; }
+.sidebar-header #legend { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; font-size: 0.82rem; margin-top: 0.1rem; }
+.sidebar-header #legend .legend-express-square { font-size: 1rem; }
+
+/* Draggable divider between the sidebar and the main pane. */
+.sidebar-resizer {
+  flex-shrink: 0;
+  width: 11px;
+  align-self: stretch;
+  cursor: col-resize;
+  position: relative;
+  touch-action: none;
+}
+.sidebar-resizer::before {
+  content: '';
+  position: absolute; top: 0; bottom: 0; left: 5px;
+  width: 1px; background: #e5e7eb;
+}
+.sidebar-resizer:hover::before, .sidebar-resizer:active::before { background: #3b63f6; width: 2px; left: 4px; }
 
 .block-list {
   list-style: none; margin: 0; padding: 0.2rem 0 0;
@@ -249,21 +269,23 @@ input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #
 .block-row {
   width: 100%;
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  padding: 0.4rem 0.55rem;
-  border: none; border-left: 3px solid transparent; border-radius: 6px;
-  background: none; color: #333; font-size: 0.9rem; cursor: pointer; text-align: left;
+  padding: 0.45rem 0.6rem; margin: 2px 0;
+  border: 1px solid transparent; border-radius: 6px;
+  background: #f4f4f4; color: #333; font-size: 0.9rem; cursor: pointer; text-align: left;
+  transition: filter 0.1s;
 }
-.block-row:hover { background: #f3f3f3; }
-.block-row.repo-own { border-left-color: var(--own-color); }
-.block-row.repo-milo { border-left-color: #fe4be9; }
-.block-row.is-selected { background: #eef1ff; border-left-color: #3b63f6; font-weight: 600; }
+.block-row.repo-own { background: var(--own-bg); border-color: var(--own-border); }
+.block-row.repo-milo { background: rgba(254, 75, 233, 0.08); border-color: var(--milo-result-border-color); }
+.block-row:hover { filter: brightness(0.95); }
+.block-row.is-selected { background: #dde5ff; border-color: #9fb4ff; font-weight: 600; }
+.block-row.is-selected:hover { filter: brightness(0.97); }
 .block-row-name {
   font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.block-row-count { color: #999; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.block-row-count { color: #888; font-variant-numeric: tabular-nums; flex-shrink: 0; }
 .block-row.is-selected .block-row-count { color: #3b63f6; }
 
-.main { flex: 1; min-width: 0; }
+.main { flex: 1; min-width: 0; padding-left: 0.6rem; }
 .main-placeholder { color: #aaa; font-size: 0.95rem; padding: 2rem 0.5rem; }
 
 .variant-detail-head {

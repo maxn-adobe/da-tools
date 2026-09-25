@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Legend } from './Legend';
 import { BlockDetail } from './BlockDetail';
 import { sortEntries } from '../lib/scan';
@@ -15,13 +15,54 @@ interface Props {
   onSelect: (name: string) => void;
 }
 
-// Two-pane workspace: a left sidebar listing every block (with usage counts, filter, sort) and a
-// main area showing the selected block's variant breakdown.
+const MIN_WIDTH = 260;
+const MAX_WIDTH = 520;
+const WIDTH_KEY = 'da-block-manager-sidebar-w';
+
+function readInitialWidth(): number {
+  try {
+    const n = Number(localStorage.getItem(WIDTH_KEY));
+    if (Number.isFinite(n) && n > 0) return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, n));
+  } catch { /* ignore */ }
+  return MIN_WIDTH;
+}
+
+// Two-pane workspace: a resizable left sidebar listing every block (usage counts, filter, sort) and
+// a main area showing the selected block's variant breakdown.
 export function BlockWorkspace({
   cfg, data, repoBlocks, publishedSet, sort, onSortChange, selectedBlock, onSelect,
 }: Props) {
   const { own: ownBlocks, milo: miloBlocks } = repoBlocks;
   const [filter, setFilter] = useState('');
+  const [width, setWidth] = useState<number>(readInitialWidth);
+  const asideRef = useRef<HTMLElement>(null);
+  const dragging = useRef(false);
+
+  useEffect(() => {
+    try { localStorage.setItem(WIDTH_KEY, String(width)); } catch { /* ignore */ }
+  }, [width]);
+
+  // Drag the divider to resize the sidebar between MIN_WIDTH and MAX_WIDTH.
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const left = asideRef.current?.getBoundingClientRect().left ?? 0;
+    dragging.current = true;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+    const onMove = (ev: PointerEvent) => {
+      if (!dragging.current) return;
+      setWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, ev.clientX - left)));
+    };
+    const onUp = () => {
+      dragging.current = false;
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
 
   // Same block set as the former ResultsList: scanned blocks plus zero-use own/milo names.
   const sorted = useMemo(() => {
@@ -38,7 +79,7 @@ export function BlockWorkspace({
 
   return (
     <div className="workspace">
-      <aside className="sidebar">
+      <aside className="sidebar" ref={asideRef} style={{ width }}>
         <div className="sidebar-header">
           <div className="sidebar-title">
             <span>Blocks</span>
@@ -51,18 +92,19 @@ export function BlockWorkspace({
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
           />
-          <div className="sidebar-controls">
-            <Legend cfg={cfg} />
+          <div className="sidebar-sort">
+            <label htmlFor="sort-select">Sort by:</label>
             <select
               id="sort-select"
               value={sort}
               onChange={(e) => onSortChange(e.target.value as SortKey)}
             >
-              <option value="usage">By Usage</option>
-              <option value="repo">By Repo</option>
+              <option value="usage">Usage</option>
+              <option value="repo">Repo</option>
               <option value="alpha">Alphabetical</option>
             </select>
           </div>
+          <Legend cfg={cfg} />
         </div>
         <ul className="block-list">
           {visible.map(([name, paths]) => {
@@ -86,6 +128,14 @@ export function BlockWorkspace({
           )}
         </ul>
       </aside>
+
+      <div
+        className="sidebar-resizer"
+        onPointerDown={startResize}
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize block list"
+      />
 
       <section className="main">
         {selectedBlock && selectedVariants ? (

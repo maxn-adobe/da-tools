@@ -13,6 +13,7 @@ interface Props {
 export function RepoBar({
   registry, selectedRepoId, busy, canManage, onSelect, onAdd, onEdit,
 }: Props) {
+  const isEmpty = registry.size === 0;
   return (
     <div className="repo-bar">
       <label htmlFor="repo-select">Repo</label>
@@ -20,9 +21,11 @@ export function RepoBar({
       <select
         id="repo-select"
         value={selectedRepoId}
-        disabled={busy}
+        disabled={busy || isEmpty}
         onChange={(e) => onSelect(e.target.value)}
       >
+        {isEmpty && <option value="">No repos yet — add one →</option>}
+        {!isEmpty && selectedRepoId === '' && <option value="" disabled>Select a repo…</option>}
         {[...registry.values()].map((entry) => (
           <option key={entry.id} value={entry.id}>{entry.id}</option>
         ))}

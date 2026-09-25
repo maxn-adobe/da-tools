@@ -3,7 +3,6 @@ import type { RepoConfig, RepoEntry, Tier } from '../types';
 export const BATCH_SIZE = 10;
 export const SKIP_DIRS = new Set(['drafts', 'tools']);
 export const REPO_STORAGE_KEY = 'da-block-manager-repo';
-export const DEFAULT_REPO = 'da-express-milo';
 export const PUBLISHED_BASE = 'https://www.adobe.com';
 export const ORG = 'adobecom';
 
@@ -33,12 +32,9 @@ export const MILO_TIER: Tier = {
   },
 };
 
-// Built-in repos: the fallback list when repos.json is missing/unreadable, and always present in
-// the picker. They have no `addedBy`, so they're locked (not editable/removable via the UI).
-export const SEED_REPOS: RepoEntry[] = [
-  { id: 'da-express-milo', blocksPath: 'express/code/blocks', ref: 'stage' },
-  { id: 'da-dc', blocksPath: 'acrobat/blocks', ref: 'stage' },
-];
+// No built-in repos: every repo is added manually by a user (and attributed to them), so none is a
+// "first-class" default. The registry starts empty until a user adds one.
+export const SEED_REPOS: RepoEntry[] = [];
 export const SEED_IDS = new Set(SEED_REPOS.map((r) => r.id));
 
 // Expand a minimal registry entry into the full config the rest of the tool consumes. The org is
