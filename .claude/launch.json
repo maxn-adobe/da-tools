@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "block-manager",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "block-manager", "run", "dev"],
+      "port": 3000
+    },
+    {
       "name": "da-document-manager",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "da-document-manager", "run", "dev"],

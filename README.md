@@ -13,6 +13,7 @@ Open the **[DA Tools home](https://da.live/app/maxn-adobe/da-tools/index)** page
 | **Block Finder** — find every `/express` page that uses a given block | [`block-finder/`](./block-finder/) | https://da.live/app/maxn-adobe/da-tools/block-finder/index |
 | **Document Counter** — count HTML documents under any directory path | [`document-counter/`](./document-counter/) | https://da.live/app/maxn-adobe/da-tools/document-counter/index |
 | **Block Index** — pick a known repo, or add any `adobecom` DA repo by name, and build a full index of every block in use | [`block-index/`](./block-index/) | https://da.live/app/maxn-adobe/da-tools/block-index/dist/index |
+| **Block Manager** — drill into any block and see its variant breakdown: which variants exist, how many pages use each, and where | [`block-manager/`](./block-manager/) | https://da.live/app/maxn-adobe/da-tools/block-manager/dist/index |
 | **Block Signature Migrator** — inspect block structure, infer block schemas, audit signature drift | [`block-signature-migrator/`](./block-signature-migrator/) | https://da.live/app/maxn-adobe/da-tools/block-signature-migrator/dist/index |
 | **GitHub Package Comparator** — compare a JSON file (e.g. `package.json`) across GitHub repos | [`github-package-comparator/`](./github-package-comparator/) | https://da.live/app/maxn-adobe/da-tools/github-package-comparator/index |
 
@@ -33,6 +34,9 @@ da-tools/                   (repo)
 │  ├─ src/  index.html  vite.config.js  package.json
 │  └─ dist/{ index.html, assets/ }   # built output (committed)
 ├─ block-index/             # index every block in use across any adobecom repo  [Vite/React, built]
+│  ├─ src/  index.html  vite.config.ts  package.json
+│  └─ dist/{ index.html, assets/ }   # built output (committed)
+├─ block-manager/           # drill into a block; per-variant usage + page drill-down  [Vite/React, built]
 │  ├─ src/  index.html  vite.config.ts  package.json
 │  └─ dist/{ index.html, assets/ }   # built output (committed)
 ├─ block-finder/            # find every /express page using a block            [static, no build]

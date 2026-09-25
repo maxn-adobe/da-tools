@@ -1,0 +1,55 @@
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { setToken } from './api/daApi';
+import { setUserEmail } from './lib/session';
+import './index.css';
+import App from './App';
+
+// Obtain the DA auth token: from VITE_DA_TOKEN when running standalone locally (set it in
+// block-index/.env.local), or from the da.live "Nx Shell" SDK when embedded in DA. Same handshake
+// as the other Vite tools — the remote SDK is dynamically imported so Vite doesn't bundle the URL,
+// and both awaits are raced with timeouts so standalone use never hangs.
+async function initToken() {
+  const localToken = import.meta.env.VITE_DA_TOKEN;
+  if (localToken) {
+    setToken(localToken);
+    setUserEmail(null); // no da.live shell locally → no authenticated email
+    return;
+  }
+  try {
+    const sdkUrl = 'https://da.live/nx/utils/sdk.js';
+    const DA_SDK = await Promise.race([
+      import(/* @vite-ignore */ sdkUrl),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('SDK load timeout (10s)')), 10000)
+      ),
+    ]) as { default: Promise<{ token: string; email?: string }> };
+    const sdkData = await Promise.race([
+      DA_SDK.default,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Token retrieval timeout (5s)')), 5000)
+      ),
+    ]) as { token: string; email?: string };
+    if (sdkData?.token) setToken(sdkData.token);
+    setUserEmail(sdkData?.email ?? null);
+  } catch {
+    setToken(null);
+    setUserEmail(null);
+  }
+}
+
+function main() {
+  const container = document.getElementById('root');
+  if (!container) return;
+  const root = createRoot(container);
+  (async () => {
+    await initToken();
+    root.render(
+      <StrictMode>
+        <App />
+      </StrictMode>
+    );
+  })();
+}
+
+main();
