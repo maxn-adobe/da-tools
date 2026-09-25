@@ -13,14 +13,26 @@ export default function App() {
   const bi = useBlockIndex(hasToken);
   const [form, setForm] = useState<{ mode: 'add' | 'edit'; entry: RepoEntry | null } | null>(null);
   const [selectedBlock, setSelectedBlock] = useState<string | null>(null);
+  const [selectedDirs, setSelectedDirs] = useState<Set<string>>(new Set());
 
   const back = computeAppHref('index', '../../index.html');
 
   const selectedEntry = bi.registry.get(bi.selectedRepoId);
   const canManageSelected = bi.canManage(selectedEntry);
 
-  // Clear the selected block whenever the repo changes — its blocks no longer apply.
-  useEffect(() => { setSelectedBlock(null); }, [bi.selectedRepoId]);
+  // Clear per-repo selections whenever the repo changes — they no longer apply.
+  useEffect(() => {
+    setSelectedBlock(null);
+    setSelectedDirs(new Set());
+  }, [bi.selectedRepoId]);
+
+  const toggleDir = (dir: string) => setSelectedDirs((prev) => {
+    const next = new Set(prev);
+    if (next.has(dir)) next.delete(dir); else next.add(dir);
+    return next;
+  });
+  const toggleAllDirs = (checked: boolean) => setSelectedDirs(checked ? new Set(bi.dirs) : new Set());
+  const orderedSelectedDirs = () => bi.dirs.filter((d) => selectedDirs.has(d));
 
   function handleSave(entry: RepoEntry) {
     setForm(null);
@@ -72,15 +84,13 @@ export default function App() {
 
           {bi.cfg ? (
             <>
-              <div className="toolbar">
-                <button type="button" onClick={bi.scanAll} disabled={bi.busy}>Scan All</button>
-                <button type="button" onClick={bi.countAll} disabled={bi.busy}>Count All</button>
-                {bi.merged && (
+              {bi.merged && (
+                <div className="toolbar">
                   <button type="button" onClick={bi.checkStatus} disabled={bi.busy}>
                     {bi.merged.publishedPaths?.length ? 'Refresh Status' : 'Check Status'}
                   </button>
-                )}
-              </div>
+                </div>
+              )}
 
               <p id="status">{bi.status}</p>
 
@@ -91,8 +101,11 @@ export default function App() {
                 busy={bi.busy}
                 open={bi.dirScansOpen}
                 onToggle={bi.setDirScansOpen}
-                onScanDir={bi.scanOne}
-                onCountDir={bi.countOne}
+                selected={selectedDirs}
+                onToggleDir={toggleDir}
+                onToggleAll={toggleAllDirs}
+                onScanSelected={() => bi.scanDirs(orderedSelectedDirs())}
+                onCountSelected={() => bi.countDirs(orderedSelectedDirs())}
               />
 
               {bi.merged ? (

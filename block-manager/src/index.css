@@ -89,7 +89,9 @@ input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #
 .rf-actions button:hover:not(:disabled) { border-color: #bbb; color: #000; }
 .rf-actions button:disabled { opacity: 0.5; cursor: default; }
 .rf-primary { background: #333; color: #fff; border-color: #333; }
-.rf-primary:hover:not(:disabled) { background: #000; color: #fff; }
+.rf-primary:hover:not(:disabled) { background: #555; color: #fff; }
+/* Beat the generic `.rf-actions button:hover` color:#000 so the Save label stays visible. */
+.rf-actions button.rf-primary:hover:not(:disabled) { background: #555; color: #fff; border-color: #555; }
 #rf-remove { color: #c0392b; border-color: #e6b0aa; margin-left: auto; }
 #rf-remove:hover { background: #fdf0ee; color: #c0392b; }
 
@@ -120,14 +122,20 @@ input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #
 #dir-details > summary::after { content: '▸'; color: #aaa; font-size: 0.9em; }
 #dir-details[open] > summary::after { content: '▾'; }
 #dir-list { margin-top: 0.35rem; }
+.dir-actions { display: flex; align-items: center; gap: 0.5rem; margin: 0.5rem 0 0.35rem; }
+.dir-selected { color: #888; font-size: 0.82rem; }
 .dir-row {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 0.6rem;
   padding: 0.3rem 0;
   border-top: 1px solid #efefef;
   font-size: 0.88rem;
+  cursor: pointer;
 }
+.dir-row input[type="checkbox"] { margin: 0; flex-shrink: 0; cursor: pointer; }
+.dir-head { font-weight: 600; border-top: none; cursor: default; }
+.dir-head-label { text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.04em; color: #999; }
 .dir-name { font-family: monospace; min-width: 7rem; color: #333; }
 .dir-meta { flex: 1; color: #777; }
 .dir-meta.dim { color: #bbb; }
@@ -261,29 +269,31 @@ input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #
 .sidebar-resizer:hover::before, .sidebar-resizer:active::before { background: #3b63f6; width: 2px; left: 4px; }
 
 .block-list {
-  list-style: none; margin: 0; padding: 0.2rem 0 0;
-  flex: 1 1 auto; min-height: 0; overflow-y: auto;
-  border-top: 1px solid #eee;
+  list-style: none; margin: 0; padding: 0;
+  flex: 1 1 auto; min-height: 0; overflow: hidden auto;
+  border: 1px solid #e0e0e0; border-radius: 8px;
 }
-.block-list-empty { color: #aaa; font-size: 0.85rem; padding: 0.6rem 0.2rem; }
+.block-list-empty { color: #aaa; font-size: 0.85rem; padding: 0.6rem 0.7rem; }
 .block-row {
   width: 100%;
   display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  padding: 0.45rem 0.6rem; margin: 2px 0;
-  border: 1px solid transparent; border-radius: 6px;
-  background: #f4f4f4; color: #333; font-size: 0.9rem; cursor: pointer; text-align: left;
-  transition: filter 0.1s;
+  padding: 0.5rem 0.7rem;
+  border: none; background: transparent; color: #333; font-size: 0.9rem;
+  cursor: pointer; text-align: left; transition: background 0.1s;
 }
-.block-row.repo-own { background: var(--own-bg); border-color: var(--own-border); }
-.block-row.repo-milo { background: rgba(254, 75, 233, 0.08); border-color: var(--milo-result-border-color); }
-.block-row:hover { filter: brightness(0.95); }
-.block-row.is-selected { background: #dde5ff; border-color: #9fb4ff; font-weight: 600; }
-.block-row.is-selected:hover { filter: brightness(0.97); }
+.block-list li:not(:last-child) .block-row { border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
+.block-row.repo-own { background: var(--own-bg); }
+.block-row.repo-milo { background: rgba(254, 75, 233, 0.08); }
+/* Hover + selected share a darker version of the row's repo tint. */
+.block-row:hover { background: rgba(0, 0, 0, 0.06); }
+.block-row.repo-own:hover, .block-row.repo-own.is-selected { background: rgba(254, 195, 17, 0.34); }
+.block-row.repo-milo:hover, .block-row.repo-milo.is-selected { background: rgba(254, 75, 233, 0.22); }
+.block-row.is-selected { background: rgba(0, 0, 0, 0.11); font-weight: 600; }
 .block-row-name {
   font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .block-row-count { color: #888; font-variant-numeric: tabular-nums; flex-shrink: 0; }
-.block-row.is-selected .block-row-count { color: #3b63f6; }
+.block-row.is-selected .block-row-count { color: #555; }
 
 .main { flex: 1; min-width: 0; padding-left: 0.6rem; }
 .main-placeholder { color: #aaa; font-size: 0.95rem; padding: 2rem 0.5rem; }

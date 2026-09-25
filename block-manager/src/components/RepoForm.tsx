@@ -30,7 +30,7 @@ export function RepoForm({
   const [ref, setRef] = useState(entry?.ref ?? DEFAULT_REF);
   const [candidates, setCandidates] = useState<string[]>([]);
   const [msg, setMsg] = useState<Msg>(
-    mode === 'add' ? { text: 'Enter a repo name, then Detect (or type the blocks path).' } : { text: '' },
+    mode === 'add' ? { text: 'Enter a repo name, then auto-detect (or type the blocks path).' } : { text: '' },
   );
   const [detecting, setDetecting] = useState(false);
   const [removePending, setRemovePending] = useState(false);
@@ -72,7 +72,7 @@ export function RepoForm({
     const blocksPath = blocks.trim().replace(/^\/+|\/+$/g, '');
     if (!repoId) { setMsg({ text: 'Repo name is required.', error: true }); return; }
     if (!isEdit && !/^[a-z0-9._-]+$/.test(repoId)) { setMsg({ text: 'Repo name has invalid characters.', error: true }); return; }
-    if (!blocksPath) { setMsg({ text: 'Blocks path is required — use Detect or type it.', error: true }); return; }
+    if (!blocksPath) { setMsg({ text: 'Blocks path is required — use auto-detect or type it.', error: true }); return; }
     if (mode === 'add' && registry.has(repoId)) { setMsg({ text: `"${repoId}" is already in the list.`, error: true }); return; }
     onSave({ id: repoId, blocksPath, ref: ref.trim() || DEFAULT_REF });
   }
@@ -110,7 +110,6 @@ export function RepoForm({
                 value={id}
                 onChange={(e) => setId(e.target.value)}
               />
-              <button type="button" disabled={detecting} onClick={handleDetect}>Detect</button>
             </span>
           </label>
         )}
@@ -119,13 +118,15 @@ export function RepoForm({
           <span className="rf-inline">
             <input
               type="text"
-              placeholder="auto-detected, e.g. edu/blocks"
+              placeholder="e.g. edu/blocks"
               autoComplete="off"
               spellCheck={false}
               value={blocks}
               onChange={(e) => setBlocks(e.target.value)}
             />
-            {isEdit && <button type="button" disabled={detecting} onClick={handleDetect}>Re-detect</button>}
+            <button type="button" disabled={detecting} onClick={handleDetect}>
+              {isEdit ? 'Re-detect' : 'auto-detect'}
+            </button>
           </span>
         </label>
         {candidates.length > 1 && (

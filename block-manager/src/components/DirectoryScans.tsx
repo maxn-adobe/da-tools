@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { DirPart } from '../types';
 
 interface Props {
@@ -7,59 +8,85 @@ interface Props {
   busy: boolean;
   open: boolean;
   onToggle: (open: boolean) => void;
-  onScanDir: (dir: string) => void;
-  onCountDir: (dir: string) => void;
+  selected: Set<string>;
+  onToggleDir: (dir: string) => void;
+  onToggleAll: (checked: boolean) => void;
+  onScanSelected: () => void;
+  onCountSelected: () => void;
 }
 
-interface RowInfo {
-  meta: string;
-  dim: boolean;
-  scanLabel: string;
-  countLabel: string;
-}
-
-function rowInfo(data: DirPart, count: number | 'counting' | undefined): RowInfo {
-  const counting = count === 'counting';
-  const counted = typeof count === 'number';
-  const countLabel = counting ? 'counting…' : (counted ? 'Recount' : 'Count');
-
-  if (data === 'scanning') {
-    return { meta: 'scanning…', dim: false, scanLabel: '…', countLabel };
-  }
+function rowMeta(data: DirPart, count: number | 'counting' | undefined): { meta: string; dim: boolean } {
+  if (data === 'scanning') return { meta: 'scanning…', dim: false };
   if (data) {
     return {
-      meta: `scanned ${new Date(data.scannedAt).toLocaleDateString()}`,
+      meta: `scanned ${new Date(data.scannedAt).toLocaleDateString()} · ${data.docCount.toLocaleString()} docs`,
       dim: false,
-      scanLabel: `Rescan ${data.docCount.toLocaleString()} docs`,
-      countLabel,
     };
   }
-  // Never scanned — show the up-front count in the Scan button when we have it.
-  const scanLabel = counted ? `Scan ${count.toLocaleString()} docs` : 'Scan';
-  const meta = counting ? 'counting…' : (counted ? 'not scanned' : 'never scanned');
-  return { meta, dim: true, scanLabel, countLabel };
+  if (count === 'counting') return { meta: 'counting…', dim: true };
+  if (typeof count === 'number') return { meta: `${count.toLocaleString()} docs · not scanned`, dim: true };
+  return { meta: 'never scanned', dim: true };
+}
+
+function label(verb: string, n: number): string {
+  if (n === 0) return `${verb} directories`;
+  return `${verb} ${n} director${n === 1 ? 'y' : 'ies'}`;
 }
 
 export function DirectoryScans({
-  dirs, dirParts, dirCounts, busy, open, onToggle, onScanDir, onCountDir,
+  dirs, dirParts, dirCounts, busy, open, onToggle,
+  selected, onToggleDir, onToggleAll, onScanSelected, onCountSelected,
 }: Props) {
+  const n = selected.size;
+  const allSelected = dirs.length > 0 && dirs.every((d) => selected.has(d));
+  const someSelected = n > 0 && !allSelected;
+
+  const headRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (headRef.current) headRef.current.indeterminate = someSelected;
+  }, [someSelected]);
+
   return (
     <details id="dir-details" open={open} onToggle={(e) => onToggle(e.currentTarget.open)}>
       <summary>Directory Scans</summary>
+
+      <div className="dir-actions">
+        <button className="dir-btn" disabled={busy || n === 0} onClick={onScanSelected}>
+          {label('Scan', n)}
+        </button>
+        <button className="dir-btn" disabled={busy || n === 0} onClick={onCountSelected}>
+          {label('Count', n)}
+        </button>
+        <span className="dir-selected">{n} selected</span>
+      </div>
+
       <div id="dir-list">
+        <div className="dir-row dir-head">
+          <input
+            ref={headRef}
+            type="checkbox"
+            checked={allSelected}
+            disabled={busy || dirs.length === 0}
+            onChange={(e) => onToggleAll(e.target.checked)}
+            aria-label="Select all directories"
+          />
+          <span className="dir-name dir-head-label">directory</span>
+          <span className="dir-meta" />
+        </div>
         {dirs.map((dir) => {
-          const info = rowInfo(dirParts[dir], dirCounts[dir]);
+          const info = rowMeta(dirParts[dir], dirCounts[dir]);
           return (
-            <div className="dir-row" key={dir}>
+            <label className="dir-row" key={dir}>
+              <input
+                type="checkbox"
+                checked={selected.has(dir)}
+                disabled={busy}
+                onChange={() => onToggleDir(dir)}
+                aria-label={`Select ${dir}`}
+              />
               <span className="dir-name">{dir}</span>
               <span className={`dir-meta${info.dim ? ' dim' : ''}`}>{info.meta}</span>
-              <button className="dir-btn" disabled={busy} onClick={() => onCountDir(dir)}>
-                {info.countLabel}
-              </button>
-              <button className="dir-btn" disabled={busy} onClick={() => onScanDir(dir)}>
-                {info.scanLabel}
-              </button>
-            </div>
+            </label>
           );
         })}
       </div>

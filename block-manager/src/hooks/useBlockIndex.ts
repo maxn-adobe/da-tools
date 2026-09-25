@@ -189,32 +189,14 @@ export function useBlockIndex(hasToken: boolean) {
     return () => { cancelled = true; };
   }, [cfg, hasToken, registryLoaded]);
 
-  const scanOne = useCallback(async (dirName: string) => {
-    if (!cfg || busy) return;
-    const activeCfg = cfg;
-    setBusy(true);
-    dispatch({ type: 'SET_SCANNING', dir: dirName });
-    try {
-      const data = await runScanForDir(activeCfg, dirName, repoBlocks, setStatus);
-      setStatus('Saving…');
-      await writeJson(auditPath(activeCfg, dirName), data);
-      dispatch({ type: 'SET_RESULT', dir: dirName, data });
-      setStatus('');
-    } catch (err) {
-      dispatch({ type: 'SET_RESULT', dir: dirName, data: null });
-      setStatus(`Error scanning ${dirName}: ${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, cfg, repoBlocks]);
-
-  const scanAll = useCallback(async () => {
-    if (!cfg || busy) return;
+  // Scan the given directories in order, persisting each as it finishes.
+  const scanDirs = useCallback(async (names: string[]) => {
+    if (!cfg || busy || names.length === 0) return;
     const activeCfg = cfg;
     setBusy(true);
     setDirScansOpen(true);
     try {
-      for (const dir of dirs) {
+      for (const dir of names) {
         dispatch({ type: 'SET_SCANNING', dir });
         try {
           // eslint-disable-next-line no-await-in-loop
@@ -232,44 +214,23 @@ export function useBlockIndex(hasToken: boolean) {
     } finally {
       setBusy(false);
     }
-  }, [busy, dirs, cfg, repoBlocks]);
+  }, [busy, cfg, repoBlocks]);
 
-  // Count the docs in one directory (ls-only crawl), then persist the updated counts map.
-  const countOne = useCallback(async (dirName: string) => {
-    if (!cfg || busy) return;
-    const activeCfg = cfg;
-    setBusy(true);
-    setStatus(`Counting ${dirName}…`);
-    setDirCounts((prev) => ({ ...prev, [dirName]: 'counting' }));
-    try {
-      const docs = await collectDocs(`${activeCfg.scanRoot}/${dirName}`);
-      let nextMap: Record<string, number | 'counting'> = {};
-      setDirCounts((prev) => { nextMap = { ...prev, [dirName]: docs.length }; return nextMap; });
-      await persistCounts(activeCfg, nextMap);
-      setStatus('');
-    } catch (err) {
-      setDirCounts((prev) => { const next = { ...prev }; delete next[dirName]; return next; });
-      setStatus(`Error counting ${dirName}: ${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, cfg, persistCounts]);
-
-  // Count every directory, then persist once.
-  const countAll = useCallback(async () => {
-    if (!cfg || busy || dirs.length === 0) return;
+  // Count the given directories (ls-only crawl), then persist the updated counts map once.
+  const countDirs = useCallback(async (names: string[]) => {
+    if (!cfg || busy || names.length === 0) return;
     const activeCfg = cfg;
     setBusy(true);
     setDirScansOpen(true);
     setDirCounts((prev) => {
       const next = { ...prev };
-      for (const d of dirs) next[d] = 'counting';
+      for (const d of names) next[d] = 'counting';
       return next;
     });
     let done = 0;
     try {
-      for (let i = 0; i < dirs.length; i += COUNT_CONCURRENCY) {
-        const batch = dirs.slice(i, i + COUNT_CONCURRENCY);
+      for (let i = 0; i < names.length; i += COUNT_CONCURRENCY) {
+        const batch = names.slice(i, i + COUNT_CONCURRENCY);
         // eslint-disable-next-line no-await-in-loop
         await Promise.all(batch.map(async (d) => {
           try {
@@ -279,7 +240,7 @@ export function useBlockIndex(hasToken: boolean) {
             setDirCounts((prev) => { const next = { ...prev }; delete next[d]; return next; });
           } finally {
             done += 1;
-            setStatus(`Counting… ${done} / ${dirs.length}`);
+            setStatus(`Counting… ${done} / ${names.length}`);
           }
         }));
       }
@@ -291,7 +252,7 @@ export function useBlockIndex(hasToken: boolean) {
     } finally {
       setBusy(false);
     }
-  }, [busy, dirs, cfg, persistCounts]);
+  }, [busy, cfg, persistCounts]);
 
   const checkStatus = useCallback(async () => {
     if (!cfg || busy) return;
@@ -416,10 +377,8 @@ export function useBlockIndex(hasToken: boolean) {
     selectRepo,
     saveRepo,
     removeRepo,
-    scanOne,
-    scanAll,
-    countOne,
-    countAll,
+    scanDirs,
+    countDirs,
     checkStatus,
   };
 }
