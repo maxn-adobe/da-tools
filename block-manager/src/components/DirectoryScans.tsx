@@ -13,6 +13,7 @@ interface Props {
   onToggleAll: (checked: boolean) => void;
   onScanSelected: () => void;
   onCountSelected: () => void;
+  onCheckSelected: () => void;
 }
 
 function rowMeta(data: DirPart, count: number | 'counting' | undefined): { meta: string; dim: boolean } {
@@ -35,7 +36,7 @@ function label(verb: string, n: number): string {
 
 export function DirectoryScans({
   dirs, dirParts, dirCounts, busy, open, onToggle,
-  selected, onToggleDir, onToggleAll, onScanSelected, onCountSelected,
+  selected, onToggleDir, onToggleAll, onScanSelected, onCountSelected, onCheckSelected,
 }: Props) {
   const n = selected.size;
   const allSelected = dirs.length > 0 && dirs.every((d) => selected.has(d));
@@ -56,6 +57,9 @@ export function DirectoryScans({
         </button>
         <button className="dir-btn" disabled={busy || n === 0} onClick={onCountSelected}>
           {label('Count', n)}
+        </button>
+        <button className="dir-btn" disabled={busy || n === 0} onClick={onCheckSelected}>
+          {label('Check publish status', n)}
         </button>
         <span className="dir-selected">{n} selected</span>
       </div>

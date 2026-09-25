@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Legend } from './Legend';
 import { BlockDetail } from './BlockDetail';
+import { CopyButton } from './CopyButton';
+import { KitchenSinkLink } from './KitchenSinkLink';
 import { sortEntries } from '../lib/scan';
-import type { RepoConfig, MergedData, RepoBlocks, SortKey } from '../types';
+import { daEditUrl, publishedUrl, kitchenSinkUrl } from '../lib/urls';
+import type {
+  RepoConfig, MergedData, RepoBlocks, KitchenSinkBlocks, SortKey,
+} from '../types';
 
 interface Props {
   cfg: RepoConfig;
   data: MergedData;
   repoBlocks: RepoBlocks;
+  kitchenSinkBlocks: KitchenSinkBlocks;
   publishedSet: Set<string> | null;
   sort: SortKey;
   onSortChange: (sort: SortKey) => void;
@@ -30,7 +36,7 @@ function readInitialWidth(): number {
 // Two-pane workspace: a resizable left sidebar listing every block (usage counts, filter, sort) and
 // a main area showing the selected block's variant breakdown.
 export function BlockWorkspace({
-  cfg, data, repoBlocks, publishedSet, sort, onSortChange, selectedBlock, onSelect,
+  cfg, data, repoBlocks, kitchenSinkBlocks, publishedSet, sort, onSortChange, selectedBlock, onSelect,
 }: Props) {
   const { own: ownBlocks, milo: miloBlocks } = repoBlocks;
   const [filter, setFilter] = useState('');
@@ -83,8 +89,9 @@ export function BlockWorkspace({
         <div className="sidebar-header">
           <div className="sidebar-title">
             <span>Blocks</span>
-            <span className="sidebar-count">{sorted.length}</span>
+            <span className="sidebar-count">{sorted.length.toLocaleString()}</span>
           </div>
+          <div className="sidebar-subtitle">{`across ${data.docCount.toLocaleString()} documents`}</div>
           <input
             className="block-filter"
             type="text"
@@ -110,16 +117,43 @@ export function BlockWorkspace({
           {visible.map(([name, paths]) => {
             const cls = ownBlocks.has(name) ? 'repo-own' : (miloBlocks.has(name) ? 'repo-milo' : '');
             const isSelected = name === selectedBlock;
+            const total = paths.length;
+            const pub = publishedSet ? paths.filter((p) => publishedSet.has(p)).length : null;
+
+            const repoType: 'own' | 'milo' | null = ownBlocks.has(name)
+              ? 'own' : (miloBlocks.has(name) ? 'milo' : null);
+            let ksHref: string | null = null;
+            if (repoType) {
+              const ksSet = repoType === 'own' ? kitchenSinkBlocks?.own : kitchenSinkBlocks?.milo;
+              ksHref = ksSet?.has(name) ? kitchenSinkUrl(cfg, name, repoType) : null;
+            }
+            const copyUrls = () => [...paths]
+              .sort((a, b) => {
+                const ap = publishedSet?.has(a) ? 0 : 1;
+                const bp = publishedSet?.has(b) ? 0 : 1;
+                if (ap !== bp) return ap - bp;
+                return a.localeCompare(b);
+              })
+              .map((p) => (publishedSet?.has(p) ? publishedUrl(cfg, p) : daEditUrl(p)))
+              .join('\n');
+
             return (
-              <li key={name}>
-                <button
-                  type="button"
-                  className={`block-row ${cls}${isSelected ? ' is-selected' : ''}`.trim()}
-                  onClick={() => onSelect(name)}
-                >
+              <li key={name} className={`block-row ${cls}${isSelected ? ' is-selected' : ''}`.trim()}>
+                <button type="button" className="block-row-btn" onClick={() => onSelect(name)}>
                   <span className="block-row-name">{name}</span>
-                  <span className="block-row-count">{paths.length}</span>
+                  <span className="block-row-count">
+                    {pub !== null ? (
+                      <>
+                        <span className="pub">{pub.toLocaleString()}</span>
+                        {` / ${total.toLocaleString()}`}
+                      </>
+                    ) : total.toLocaleString()}
+                  </span>
                 </button>
+                <span className="block-row-icons">
+                  {repoType && <KitchenSinkLink href={ksHref} />}
+                  {total > 0 && <CopyButton getText={copyUrls} />}
+                </span>
               </li>
             );
           })}
@@ -141,11 +175,8 @@ export function BlockWorkspace({
         {selectedBlock && selectedVariants ? (
           <BlockDetail
             cfg={cfg}
-            blockName={selectedBlock}
             variantMap={selectedVariants}
             publishedSet={publishedSet}
-            inOwn={ownBlocks.has(selectedBlock)}
-            inMilo={miloBlocks.has(selectedBlock)}
           />
         ) : (
           <p className="main-placeholder">Select a block to see its variants.</p>

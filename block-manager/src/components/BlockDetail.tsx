@@ -6,43 +6,30 @@ import type { RepoConfig } from '../types';
 
 interface Props {
   cfg: RepoConfig;
-  blockName: string;
   // variant token -> doc paths (from MergedData.variants[blockName]).
   variantMap: Record<string, string[]>;
   publishedSet: Set<string> | null;
-  inOwn: boolean;
-  inMilo: boolean;
 }
 
 // The main-area detail for a selected block: its variant breakdown, each variant expandable to the
-// pages that use it. Read-only — the page-path list markup mirrors the former BlockAccordion.
-export function BlockDetail({
-  cfg, blockName, variantMap, publishedSet, inOwn, inMilo,
-}: Props) {
-  // Variant rows by page count desc, then name; NO_VARIANT participates like any other token.
+// pages that use it. Read-only. The block name / counts live in the sidebar, so this pane shows only
+// a "N Variants" section title (excluding the (none) bucket from the count) + the variant rows.
+export function BlockDetail({ cfg, variantMap, publishedSet }: Props) {
+  // Variant rows by page count desc, then name; NO_VARIANT participates as a row but is not a variant.
   const variantEntries = Object.entries(variantMap).sort(([aName, aPaths], [bName, bPaths]) => {
     if (bPaths.length !== aPaths.length) return bPaths.length - aPaths.length;
     return aName.localeCompare(bName);
   });
-
-  // A page can carry more than one variant token, so total pages is the de-duped union.
-  const totalPages = new Set(Object.values(variantMap).flat()).size;
-  const repoLabel = inOwn ? cfg.own.label : (inMilo && cfg.milo ? cfg.milo.label : 'unrecognized');
-  const repoClass = inOwn ? 'repo-own' : (inMilo ? 'repo-milo' : '');
+  const namedCount = variantEntries.filter(([token]) => token !== NO_VARIANT).length;
 
   return (
     <div className="variant-detail">
-      <div className="variant-detail-head">
-        <h3 className="variant-block-name">{blockName}</h3>
-        <span className={`variant-repo-badge ${repoClass}`.trim()}>{repoLabel}</span>
-        <span className="variant-detail-meta">
-          {`${variantEntries.length} variant${variantEntries.length !== 1 ? 's' : ''} · `}
-          {`${totalPages.toLocaleString()} page${totalPages !== 1 ? 's' : ''}`}
-        </span>
-      </div>
+      <h3 className="variant-section-title">
+        {`${namedCount.toLocaleString()} Variant${namedCount === 1 ? '' : 's'}`}
+      </h3>
 
       {variantEntries.length === 0 ? (
-        <p className="main-placeholder">No instances found — run a scan for this repo&apos;s directories.</p>
+        <p className="main-placeholder">No instances found — scan this repo&apos;s directories.</p>
       ) : (
         <div className="variant-list">
           {variantEntries.map(([token, paths]) => {
@@ -64,8 +51,15 @@ export function BlockDetail({
                   <span className="summary-left">
                     <span className={`variant-token${isNone ? ' variant-token-none' : ''}`}>{token}</span>
                     <span className="summary-count">
-                      {` — ${paths.length} page${paths.length !== 1 ? 's' : ''}`}
-                      {pubCount !== null && <span className="published-count">{` (${pubCount} published)`}</span>}
+                      {pubCount !== null ? (
+                        <>
+                          {' — '}
+                          <span className="pub">{pubCount.toLocaleString()}</span>
+                          {` / ${paths.length.toLocaleString()} page${paths.length !== 1 ? 's' : ''}`}
+                        </>
+                      ) : (
+                        ` — ${paths.length.toLocaleString()} page${paths.length !== 1 ? 's' : ''}`
+                      )}
                     </span>
                   </span>
                   <CopyButton getText={copyText} />

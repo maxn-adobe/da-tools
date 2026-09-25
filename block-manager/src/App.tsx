@@ -84,14 +84,6 @@ export default function App() {
 
           {bi.cfg ? (
             <>
-              {bi.merged && (
-                <div className="toolbar">
-                  <button type="button" onClick={bi.checkStatus} disabled={bi.busy}>
-                    {bi.merged.publishedPaths?.length ? 'Refresh Status' : 'Check Status'}
-                  </button>
-                </div>
-              )}
-
               <p id="status">{bi.status}</p>
 
               <DirectoryScans
@@ -106,6 +98,7 @@ export default function App() {
                 onToggleAll={toggleAllDirs}
                 onScanSelected={() => bi.scanDirs(orderedSelectedDirs())}
                 onCountSelected={() => bi.countDirs(orderedSelectedDirs())}
+                onCheckSelected={() => bi.checkStatusDirs(orderedSelectedDirs())}
               />
 
               {bi.merged ? (
@@ -113,6 +106,7 @@ export default function App() {
                   cfg={bi.cfg}
                   data={bi.merged}
                   repoBlocks={bi.repoBlocks}
+                  kitchenSinkBlocks={bi.kitchenSinkBlocks}
                   publishedSet={bi.publishedSet}
                   sort={bi.sort}
                   onSortChange={bi.setSort}

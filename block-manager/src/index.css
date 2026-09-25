@@ -242,6 +242,7 @@ input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #
   font-weight: 700; font-size: 1rem; color: #333;
 }
 .sidebar-count { font-weight: 400; font-size: 0.85rem; color: #999; }
+.sidebar-subtitle { color: #999; font-size: 0.8rem; margin-top: -0.15rem; }
 .block-filter {
   font-size: 0.88rem; padding: 0.4rem 0.55rem;
   border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333;
@@ -249,8 +250,9 @@ input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #
 .sidebar-sort { display: flex; align-items: center; gap: 0.45rem; }
 .sidebar-sort label { font-size: 0.85rem; color: #666; }
 .sidebar-sort #sort-select { flex: 1; }
-.sidebar-header #legend { display: flex; flex-wrap: wrap; gap: 0.35rem 0.9rem; font-size: 0.82rem; margin-top: 0.1rem; }
-.sidebar-header #legend .legend-express-square { font-size: 1rem; }
+.sidebar-header #legend { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; font-size: 0.82rem; margin-top: 0.1rem; }
+.sidebar-header #legend > span { gap: 0.35rem; }
+.sidebar-header #legend .legend-express-square { font-size: 1.35rem; }
 
 /* Draggable divider between the sidebar and the main pane. */
 .sidebar-resizer {
@@ -274,40 +276,43 @@ input[type="color"] { width: 3rem; height: 2rem; padding: 0; border: 1px solid #
   border: 1px solid #e0e0e0; border-radius: 8px;
 }
 .block-list-empty { color: #aaa; font-size: 0.85rem; padding: 0.6rem 0.7rem; }
+/* Each row is a list item carrying the repo tint; a transparent button holds the click target and
+   the kitchen-sink / copy icons sit to its right. Unknown-repo rows get a neutral gray tint. */
 .block-row {
-  width: 100%;
-  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
-  padding: 0.5rem 0.7rem;
-  border: none; background: transparent; color: #333; font-size: 0.9rem;
-  cursor: pointer; text-align: left; transition: background 0.1s;
+  display: flex; align-items: center; gap: 0.3rem;
+  padding-right: 0.5rem;
+  background: rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  transition: background 0.1s;
 }
-.block-list li:not(:last-child) .block-row { border-bottom: 1px solid rgba(0, 0, 0, 0.06); }
+.block-row:last-child { border-bottom: none; }
 .block-row.repo-own { background: var(--own-bg); }
 .block-row.repo-milo { background: rgba(254, 75, 233, 0.08); }
 /* Hover + selected share a darker version of the row's repo tint. */
-.block-row:hover { background: rgba(0, 0, 0, 0.06); }
+.block-row:hover { background: rgba(0, 0, 0, 0.1); }
 .block-row.repo-own:hover, .block-row.repo-own.is-selected { background: rgba(254, 195, 17, 0.34); }
 .block-row.repo-milo:hover, .block-row.repo-milo.is-selected { background: rgba(254, 75, 233, 0.22); }
-.block-row.is-selected { background: rgba(0, 0, 0, 0.11); font-weight: 600; }
-.block-row-name {
-  font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.block-row.is-selected { background: rgba(0, 0, 0, 0.13); }
+.block-row.is-selected .block-row-btn { font-weight: 600; }
+
+.block-row-btn {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  padding: 0.5rem 0.2rem 0.5rem 0.7rem;
+  border: none; background: transparent; color: #333; font-size: 0.9rem;
+  cursor: pointer; text-align: left;
 }
+.block-row-name { font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .block-row-count { color: #888; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.block-row-count .pub { color: #2d9e2d; }
 .block-row.is-selected .block-row-count { color: #555; }
+.block-row-icons { display: flex; align-items: center; gap: 0.55rem; flex-shrink: 0; }
 
 .main { flex: 1; min-width: 0; padding-left: 0.6rem; }
 .main-placeholder { color: #aaa; font-size: 0.95rem; padding: 2rem 0.5rem; }
 
-.variant-detail-head {
-  display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.9rem; flex-wrap: wrap;
-}
-.variant-block-name { font-family: monospace; font-size: 1.4rem; font-weight: 700; margin: 0; color: #222; }
-.variant-repo-badge {
-  font-size: 0.72rem; padding: 0.12rem 0.5rem; border-radius: 999px; background: #eee; color: #777;
-}
-.variant-repo-badge.repo-own { background: var(--own-bg); color: #9a7500; }
-.variant-repo-badge.repo-milo { background: rgba(254, 75, 233, 0.12); color: #b03aa5; }
-.variant-detail-meta { color: #999; font-size: 0.85rem; }
+.variant-section-title { font-size: 1.25rem; font-weight: 700; margin: 0 0 0.9rem; color: #222; }
+.summary-count .pub { color: #2d9e2d; font-weight: 600; }
 
 .variant-list { display: flex; flex-direction: column; gap: 0.4rem; }
 .variant-item { border: 1px solid #e0e0e0; border-radius: 8px; background: #fafafa; }

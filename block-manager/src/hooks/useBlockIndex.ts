@@ -254,13 +254,23 @@ export function useBlockIndex(hasToken: boolean) {
     }
   }, [busy, cfg, persistCounts]);
 
-  const checkStatus = useCallback(async () => {
-    if (!cfg || busy) return;
+  // Check publish status for the given directories (only those already scanned).
+  const checkStatusDirs = useCallback(async (names: string[]) => {
+    if (!cfg || busy || names.length === 0) return;
     const activeCfg = cfg;
+    const targetDirs = names.filter((d) => {
+      const data = dirParts[d];
+      return !!data && data !== 'scanning';
+    });
+    if (targetDirs.length === 0) {
+      setStatus('None of the selected directories are scanned yet — scan them first.');
+      return;
+    }
     setBusy(true);
 
     const pathToDir: Record<string, string> = {};
-    for (const [dir, data] of Object.entries(dirParts)) {
+    for (const dir of targetDirs) {
+      const data = dirParts[dir];
       if (!data || data === 'scanning') continue;
       for (const paths of Object.values(data.blocks)) {
         for (const p of paths) pathToDir[p] = dir;
@@ -270,7 +280,7 @@ export function useBlockIndex(hasToken: boolean) {
     const allPaths = Object.keys(pathToDir);
     try {
       const publishedPaths = await fetchPublishedPaths(allPaths, (done, total) => {
-        setStatus(`Checking status… ${done} / ${total}`);
+        setStatus(`Checking publish status… ${done} / ${total}`);
       });
 
       const publishedByDir: Record<string, string[]> = {};
@@ -283,7 +293,8 @@ export function useBlockIndex(hasToken: boolean) {
       const now = new Date().toISOString();
       const updates: Record<string, AuditRecord> = {};
       await Promise.all(
-        Object.entries(dirParts).map(async ([dir, data]) => {
+        targetDirs.map(async (dir) => {
+          const data = dirParts[dir];
           if (!data || data === 'scanning') return;
           const updated: AuditRecord = { ...data, statusCheckedAt: now, publishedPaths: publishedByDir[dir] || [] };
           updates[dir] = updated;
@@ -379,7 +390,7 @@ export function useBlockIndex(hasToken: boolean) {
     removeRepo,
     scanDirs,
     countDirs,
-    checkStatus,
+    checkStatusDirs,
   };
 }
 
