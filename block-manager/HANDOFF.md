@@ -70,7 +70,7 @@ state library, no TanStack. Deps are just `react`/`react-dom`.
 - `App.tsx` — top-level composition and per-page UI state (`selectedBlock`, `selectedDirs`, add/edit
   form toggle). Gates the whole UI on a DA token and on a selected repo (`bi.cfg`).
 - `hooks/useBlockIndex.ts` — **the brain.** All per-repo state and every async action (load registry,
-  per-repo init, `scanDirs`, `countDirs`, `checkStatus`, `selectRepo`, `saveRepo`, `removeRepo`). Uses a
+  per-repo init, `scanDirs`, `countDirs`, `checkStatusDirs`, `selectRepo`, `saveRepo`, `removeRepo`). Uses a
   `dirParts` reducer so concurrent scan loops can't clobber each other via stale closures.
 - `api/daApi.ts` — DA admin REST client (`ls`, `cat`, `collectDocs`, `readJson`, `writeJson`,
   `fetchPublishedPaths`) + the module-level token store (`getToken`/`setToken`).
@@ -88,11 +88,14 @@ state library, no TanStack. Deps are just `react`/`react-dom`.
   - `RepoBar.tsx` — repo picker (+ empty state) and Add/Edit buttons.
   - `RepoForm.tsx` — add/edit a repo; GitHub auto-detect of the blocks path.
   - `DirectoryScans.tsx` — the directory panel: per-row **checkboxes**, a select-all header, and a
-    selection-driven action bar (**Scan N directories** / **Count N directories**). No per-row buttons.
-  - `BlockWorkspace.tsx` — the two-pane shell: a resizable sidebar (block list + filter + sort +
-    legend) and the main pane. Owns sidebar width (drag-resize, persisted) and the filter.
-  - `BlockDetail.tsx` — the selected block's variant breakdown + per-variant page drill-down.
-  - `Legend.tsx`, `CopyButton.tsx`, `icons.tsx` — leaf UI. (`KitchenSinkLink.tsx` is currently unused.)
+    selection-driven action bar (**Scan** / **Count** / **Check publish status** "N directories"). No
+    per-row buttons.
+  - `BlockWorkspace.tsx` — the two-pane shell: a resizable sidebar (block list with per-row kitchen-sink
+    + copy icons, filter, sort, legend, and the "N blocks / across M documents" header) and the main
+    pane. Owns sidebar width (drag-resize, persisted) and the filter.
+  - `BlockDetail.tsx` — the selected block's "N Variants" pane (excludes `(none)` from the count) +
+    per-variant page drill-down.
+  - `Legend.tsx`, `CopyButton.tsx`, `KitchenSinkLink.tsx`, `icons.tsx` — leaf UI.
 
 ### Data model (`src/types.ts`)
 - `AuditRecord` — one directory's cached scan (`audit-<dir>.json`): `scannedAt`, `docCount`,
@@ -138,20 +141,27 @@ the smaller ones (the checkbox selection in the Directory Scans panel exists par
 
 ## 5. Current status (what works today)
 
-Milestone 1 is complete and committed to `main`, plus two rounds of refinements:
+Milestone 1 is complete and committed to `main`, plus several rounds of refinements:
 
 - **Repo management:** no default repos; add any `adobecom` repo by name with GitHub auto-detect of the
-  blocks path; advisory edit/remove gating by the adder's da.live email; empty-state prompts.
-- **Directory scanning:** a per-directory panel with checkboxes + select-all; **Scan N directories** and
-  **Count N directories** act on the selection (disabled when nothing is selected).
+  blocks path (the detect button sits by the Blocks-path input); advisory edit/remove gating by the
+  adder's da.live email; empty-state prompts.
+- **Directory panel (selection-driven):** per-directory checkboxes + a select-all header; **Scan N
+  directories**, **Count N directories**, and **Check publish status N directories** all act on the
+  selected directories (disabled when nothing is selected). There are no per-row action buttons and no
+  separate top toolbar.
 - **Persisted counts:** directory doc-counts are stored in `counts.json` and loaded on repo open; they
   are no longer recomputed automatically on every load.
-- **Variant scan + detail:** the sidebar lists every block (usage count, filter, sort by
-  usage/repo/alphabetical, full-row repo tint); selecting a block shows its variant tokens with page
-  counts and an expandable page drill-down (DA edit links + published badges after Check Status).
+- **Variant scan + detail:** the sidebar lists every block with a "N blocks / across M documents"
+  header, filter, sort (usage/repo/alphabetical), and full-row repo tints (own=amber, milo=pink,
+  unrecognized=gray). Each row shows a kitchen-sink link + copy-all-URLs icon and, after a status check,
+  a green `published / total` fraction. Selecting a block shows a "N Variants" pane (excluding the
+  `(none)` bucket from the count) with each variant's page count and an expandable page drill-down
+  (DA edit links + published badges).
+- **Publish status:** the selection-based check HEAD-probes aem.live to mark published pages, stored per
+  directory in the audit records.
 - **Sidebar UX:** drag-resizable (260–520px, persisted); "Sort by:" label above an enlarged legend;
   block rows are bordered list rows (no pills) with a darker repo-tint on hover/selection.
-- **Status:** Check Status HEAD-probes aem.live to mark published pages.
 
 ---
 
