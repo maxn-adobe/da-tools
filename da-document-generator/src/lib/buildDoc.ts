@@ -44,46 +44,25 @@ export function resolveOutputPath(row: CsvRow, cfg: OutputConfig): string {
 // ---------------------------------------------------------------------------
 
 /**
- * BAKE: a self-contained static document that renders without the runtime content-replace.js
- * script. It (1) substitutes body {{tokens}} with real values, (2) resolves `#key` CTA links from
- * data, and (3) attaches a Metadata block carrying the row's fields (title/description/etc.) with
- * `sheet-powered` forced OFF — so EDS still emits the correct <head> metadata, but
- * content-replace.js does not run (the body is already filled).
+ * Build one generated document from the template: (1) substitute the template's {{tokens}} —
+ * anywhere in the HTML, including link URLs and its own authored Metadata block — with the row's
+ * values, then (2) stamp `generated-batch` + `last-updated` into the Metadata block (creating one if
+ * the template has none). Nothing else is rewritten or added: a data column only reaches the
+ * document through a {{token}} the template references (e.g. a `title | {{title}}` Metadata row).
  */
 export function buildBakedDoc(templateHtml: string, row: CsvRow, opts: { generatedBatch: string }): string {
   const substituted = applyTemplate(templateHtml, row);
   const doc = new DOMParser().parseFromString(substituted, 'text/html');
-  resolveHashLinksOnDoc(doc, row);
 
-  const entries: Record<string, string> = {};
-  for (const [key, value] of Object.entries(row)) {
-    if (key === '_id') continue;
-    entries[key] = value;
-  }
-  entries['sheet-powered'] = 'N';
   // Stamp the generation batch (one shared ISO timestamp per Generate run — a batch identity) plus a
   // per-doc last-updated, matching pdp-document-generator's convention so a Document Manager Batch
   // filter can group these docs. `generated-batch` must never be re-bumped by a later edit.
-  entries['generated-batch'] = opts.generatedBatch;
-  entries['last-updated'] = new Date().toISOString();
-  upsertMetadataBlockOnDoc(doc, entries);
+  upsertMetadataBlockOnDoc(doc, {
+    'generated-batch': opts.generatedBatch,
+    'last-updated': new Date().toISOString(),
+  });
 
   return serializeDoc(doc);
-}
-
-/**
- * Resolve `<a href="...#key">` links whose `#key` matches a data column to that column's value.
- * Ports content-replace.js's link-rewrite behavior to author time.
- */
-function resolveHashLinksOnDoc(doc: Document, row: CsvRow): void {
-  doc.querySelectorAll('a[href]').forEach((a) => {
-    const href = a.getAttribute('href') ?? '';
-    const hashIdx = href.indexOf('#');
-    if (hashIdx === -1) return;
-    const key = href.slice(hashIdx + 1);
-    const value = row[key];
-    if (value != null && value.trim() !== '') a.setAttribute('href', value);
-  });
 }
 
 // ---------------------------------------------------------------------------
