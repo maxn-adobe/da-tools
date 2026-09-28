@@ -14,8 +14,7 @@ Opens in DA at: **https://da.live/app/maxn-adobe/da-tools/da-document-generator/
 
 Each generated document is the template with its `{{tokens}}` filled in from the row — nothing else from your data is added:
 
-- **`{{token}}` substitution** — every `{{column}}` in the template (the body *and* the template's own Metadata block) is replaced with that row's value. Columns the template doesn't reference are ignored.
-- **`#key` links** — a link whose URL ends in `#<column>` (e.g. `…/default#marquee-cta-link`) has its whole URL replaced with that row's column value, when non-empty.
+- **`{{token}}` substitution** — every `{{column}}` in the template is replaced with that row's value: in the body, in link URLs (e.g. set a link's URL to `{{marquee-cta-link}}`), and in the template's own Metadata block. Columns the template doesn't reference are ignored, and nothing else in the template is rewritten.
 - **Metadata** — the template's Metadata block is kept as authored (with its `{{tokens}}` filled). The tool adds only `generated-batch` (one shared ISO timestamp per Generate run) and `last-updated` (per doc), creating a Metadata block if the template has none. To put a data value into page metadata (e.g. `title`, `description`, `sheet-powered`), add a `key | {{column}}` row to the template's Metadata block.
 
 Documents are fully baked at generation time — they don't rely on the site's runtime `content-replace.js` to fill tokens.

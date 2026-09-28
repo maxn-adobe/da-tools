@@ -44,16 +44,15 @@ export function resolveOutputPath(row: CsvRow, cfg: OutputConfig): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Build one generated document from the template: (1) substitute the template's {{tokens}} — in the
- * body and in its own authored Metadata block — with the row's values, (2) resolve `#key` CTA links
- * from data, and (3) stamp `generated-batch` + `last-updated` into the Metadata block (creating one
- * if the template has none). No other metadata is written: a data column only reaches the document
- * through a {{token}} the template references (e.g. a `title | {{title}}` Metadata row).
+ * Build one generated document from the template: (1) substitute the template's {{tokens}} —
+ * anywhere in the HTML, including link URLs and its own authored Metadata block — with the row's
+ * values, then (2) stamp `generated-batch` + `last-updated` into the Metadata block (creating one if
+ * the template has none). Nothing else is rewritten or added: a data column only reaches the
+ * document through a {{token}} the template references (e.g. a `title | {{title}}` Metadata row).
  */
 export function buildBakedDoc(templateHtml: string, row: CsvRow, opts: { generatedBatch: string }): string {
   const substituted = applyTemplate(templateHtml, row);
   const doc = new DOMParser().parseFromString(substituted, 'text/html');
-  resolveHashLinksOnDoc(doc, row);
 
   // Stamp the generation batch (one shared ISO timestamp per Generate run — a batch identity) plus a
   // per-doc last-updated, matching pdp-document-generator's convention so a Document Manager Batch
@@ -64,21 +63,6 @@ export function buildBakedDoc(templateHtml: string, row: CsvRow, opts: { generat
   });
 
   return serializeDoc(doc);
-}
-
-/**
- * Resolve `<a href="...#key">` links whose `#key` matches a data column to that column's value.
- * Ports content-replace.js's link-rewrite behavior to author time.
- */
-function resolveHashLinksOnDoc(doc: Document, row: CsvRow): void {
-  doc.querySelectorAll('a[href]').forEach((a) => {
-    const href = a.getAttribute('href') ?? '';
-    const hashIdx = href.indexOf('#');
-    if (hashIdx === -1) return;
-    const key = href.slice(hashIdx + 1);
-    const value = row[key];
-    if (value != null && value.trim() !== '') a.setAttribute('href', value);
-  });
 }
 
 // ---------------------------------------------------------------------------
